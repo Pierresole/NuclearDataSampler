@@ -123,10 +123,10 @@ When we talk about a **mean vector** \( \mu \) and a **covariance matrix** \( \S
 
 $p(\mathbf{x}) = \frac{1}{\sqrt{(2\pi)^n \det(\Sigma)}} \exp\left(-\frac{1}{2} (\mathbf{x} - \mu)^\top \Sigma^{-1} (\mathbf{x} - \mu)\right).$
 
-- \( \mu \in \mathbb{R}^n \) is the vector of means for the \( n \) parameters.
-- \( \Sigma \in \mathbb{R}^{n \times n} \) is the covariance matrix describing pairwise correlations between parameters.
+- $\mu \in \mathbb{R}^n$ is the vector of means for the $n$ parameters.
+- $\Sigma \in \mathbb{R}^{n \times n}$ is the covariance matrix describing pairwise correlations between parameters.
 
-By definition, only specifying \( \mu \) and \( \Sigma \) means that the distribution is **exactly Gaussian**. Any higher-order "shape" information (e.g., skewness, kurtosis, etc.) is zero for a perfect Gaussian. 
+By definition, only specifying $\mu$ and $\Sigma$ means that the distribution is **exactly Gaussian**. Any higher-order "shape" information (e.g., skewness, kurtosis, etc.) is zero for a perfect Gaussian. 
 
 If the physical reality demands more complex distributions, we must add more parameters or move beyond the Gaussian assumption.
 
