@@ -1,4 +1,4 @@
-from LeaprInterface import LeaprInterface, TemperatureDependentData
+from .LeaprInterface import LeaprInterface, TemperatureDependentData
 from scipy.stats import qmc
 from scipy.optimize import curve_fit
 import numpy as np
