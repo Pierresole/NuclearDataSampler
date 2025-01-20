@@ -6,7 +6,7 @@ Welcome to **NuclearDataSampler**, a Python-based code aiming to randomly sample
 
 ## Introduction: UQ in Particle Transport Physics
 
-Uncertainty Quantification (UQ) in particle transport typically involves answering the question: “How do the uncertainties in nuclear cross sections, resonance parameters, and other fundamental data propagate to engineering or physics parameters of interest (e.g., reaction rates, keff in reactor calculations, neutron flux spectrum)?” 
+Uncertainty Quantification (UQ) in particle transport typically involves answering the question: “How do the uncertainties in nuclear cross sections, resonance parameters, and other fundamental data propagate to engineering or physics parameters of interest (e.g., reaction rates, keff in reactor calculations, neutron and neutrinos flux spectrum)?” 
 
 Two common strategies to address this question are:
 1. **Sensitivity-based approaches**: Perturb the inputs systematically using partial derivatives or adjoint solutions to infer the output uncertainties. These methods often rely on linear approximations and can have difficulties with strongly non-linear or resonance-dominated processes.
@@ -26,7 +26,7 @@ Several tools exist for generating or processing perturbed nuclear data files, e
 
 - **SANDY**  
   *Reference:* L. Fiorito, *et al.*, [SANDY Repository](https://github.com/luca-fiorito-11/sandy).  
-  A Python package focused on sampling and analyzing nuclear data uncertainties. It can produce perturbed nuclear data in various standard nuclear data formats.
+  A Python package focused on sampling and analyzing nuclear data uncertainties. It can produce perturbed nuclear data in PENDF formats using the processing code NJOY.
 
 - **FRENDY**  
   *Reference:* K. Tada et al., *"FRENDY (FRom Evaluated Nuclear Data librarY to any application) Code Development"*, JAEA-Data/Code series, Japan Atomic Energy Agency.  
@@ -37,7 +37,15 @@ Despite these codes’ capabilities, many times a user just needs a straightforw
 2. Sample new sets of evaluated data from a well-defined **multivariate Gaussian distribution** (mean vector + covariance matrix).
 3. Output new ENDF files with minimal additional assumptions or format transformations.
 
-That is exactly what **NuclearDataSampler** aims to do.
+That is exactly what **NuclearDataSampler** aims to do. 
+
+What motivated this code is a simple but faithful treatment of resonance parameters uncertainty that are shadowed in the processing done in SANDY or FRENDY. A very foundational code is **ENDSAM** developed at JSI:
+
+*Reference:* 
+M. Žerovnik, et al., *"Computer code ENDSAM for random sampling and validation of the resonance parameters covariance matrices of some major nuclear data libraries"*, Annals of Nuclear Energy, 2016.  
+DOI: [10.1016/j.anucene.2016.04.026](https://doi.org/10.1016/j.anucene.2016.04.026)
+
+ENDSAM is able to generate random files but was primarily developed to check whether the relative uncertainty of certain parameters is too high, and if so, verify if their covariance matrix is mathematically correct (log-normal transformation). The slightly different strategy in **NuclearDataSampler** is to stick to Normal laws and if it fails, then it fails. Fixing the problem should be done by the evaluators and not "tourneviser" ("screw-drived") by the user.
 
 ---
 
