@@ -120,9 +120,8 @@ This will let you edit the code locally and directly test your changes without r
 
 When we talk about a **mean vector** \( \mu \) and a **covariance matrix** \( \Sigma \), we are specifying a **multivariate Gaussian (normal) distribution**:
 
-\[
-p(\mathbf{x}) = \frac{1}{\sqrt{(2\pi)^n \det(\Sigma)}} \exp\left(-\frac{1}{2} (\mathbf{x} - \mu)^\top \Sigma^{-1} (\mathbf{x} - \mu)\right).
-\]
+
+$p(\mathbf{x}) = \frac{1}{\sqrt{(2\pi)^n \det(\Sigma)}} \exp\left(-\frac{1}{2} (\mathbf{x} - \mu)^\top \Sigma^{-1} (\mathbf{x} - \mu)\right).$
 
 - \( \mu \in \mathbb{R}^n \) is the vector of means for the \( n \) parameters.
 - \( \Sigma \in \mathbb{R}^{n \times n} \) is the covariance matrix describing pairwise correlations between parameters.
