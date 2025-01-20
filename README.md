@@ -67,3 +67,27 @@ You can install **NuclearDataSampler** via pip:
 
 ```bash
 pip install NuclearDataSampler
+```
+
+If you want to actively develop or contribute to the project, clone this repository and install in “editable” mode:
+
+```bash
+git clone https://github.com/Pierresole/NuclearDataSampler.git
+cd NuclearDataSampler
+pip install -e .
+```
+This will let you edit the code locally and directly test your changes without reinstalling.
+
+## Progress Overview
+
+| Perturbed Parameters         | Status            | Comment |
+|---                           |           :---:   |---      |
+| Thermal Parameters           | :white_check_mark:| LEAPR inputs|
+| Resonance Parameters         |                   |         |
+| - URR                        | :white_check_mark:|         |
+| - MLBW                       |                   |         |
+| - RM                         | :white_check_mark:|         |
+| - RML                        | :white_check_mark:|         |
+| Cross Sections (groupwise)   | :x:               | Interpolation(1) |
+
+(1) To perturb a MF3 based on its MF33, it is necessary to create an easily interpolable XS. This has been done. What is left is to think of the code organization and the way of perturbing composed cross sections.  
