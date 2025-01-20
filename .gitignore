@@ -1,1 +1,3 @@
-src/resonance_uncertainty/__pycache__/URR_BWUncertainty.cpython-313.pyc
+src/resonance_uncertainty/__pycache__/*
+*.h5
+*.hdf5
