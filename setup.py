@@ -1,14 +1,14 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="NDSampler",  # Replace with your project name
+    name="NuclearDataSampler",  # Replace with your project name
     version="0.0.0",  # Initial version
     description="Sample Nuclear Data Files",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     author="SOLE Pierre",
     author_email="pierre.sole@asnr.fr",
-    url="https://github.com/Pierresole/NDSampler.git",  
+    url="https://github.com/Pierresole/NuclearDataSampler.git",  
     packages=find_packages(where="sources"),  # Automatically find and include all packages
     package_dir={"": "sources"},  # Root for all packages
     install_requires=[
