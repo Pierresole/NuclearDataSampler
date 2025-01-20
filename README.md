@@ -16,20 +16,17 @@ Two common strategies to address this question are:
 
 ---
 
-## Existing Codes and Motivation
+## State of the Art and Motivation
 
 Several tools exist for generating or processing perturbed nuclear data files, each with its own set of assumptions and workflows. For example:
 
-- **TALYS**  
-  *Reference:* A.J. Koning, S. Hilaire, and M.C. Duijvestijn, *"TALYS: Comprehensive Nuclear Reaction Modeling"*, International Conference on Nuclear Data for Science and Technology, 2007.  
+- **TALYS** (1) 
   A comprehensive nuclear reaction model code that can generate cross sections, angular distributions, and other observables for many projectiles, targets, and reaction channels. TALYS includes various nuclear structure models (optical models, level densities, gamma strength functions, etc.). One typical usage is to sample model parameters (e.g., nuclear level density parameters, optical model potential parameters) multiple times, generate numerous “realizations” of cross sections, and compare these with experimental data at certain steps. This effectively yields an ensemble of cross-section evaluations.
 
-- **SANDY**  
-  *Reference:* L. Fiorito, *et al.*, [SANDY Repository](https://github.com/luca-fiorito-11/sandy).  
+- **SANDY** (2) 
   A Python package focused on sampling and analyzing nuclear data uncertainties. It can produce perturbed nuclear data in PENDF formats using the processing code NJOY.
 
-- **FRENDY**  
-  *Reference:* K. Tada et al., *"FRENDY (FRom Evaluated Nuclear Data librarY to any application) Code Development"*, JAEA-Data/Code series, Japan Atomic Energy Agency.  
+- **FRENDY** (3) 
   A data processing system designed to read, process, and produce ACE-formatted data from evaluated nuclear data libraries. FRENDY also provides modules to handle uncertainties.
 
 Despite these codes’ capabilities, many times a user just needs a straightforward way to:
@@ -39,13 +36,30 @@ Despite these codes’ capabilities, many times a user just needs a straightforw
 
 That is exactly what **NuclearDataSampler** aims to do. 
 
-What motivated this code is a simple but faithful treatment of resonance parameters uncertainty that are shadowed in the processing done in SANDY or FRENDY. A very foundational code is **ENDSAM** developed at JSI:
+What motivated this code is a simple but faithful treatment of resonance parameters uncertainty that are shadowed in the processing done in SANDY or FRENDY. A very foundational code is **ENDSAM** (4) developed at JSI. 
 
-*Reference:* 
-M. Žerovnik, et al., *"Computer code ENDSAM for random sampling and validation of the resonance parameters covariance matrices of some major nuclear data libraries"*, Annals of Nuclear Energy, 2016.  
+ENDSAM is able to generate random files but was primarily developed to check whether the relative uncertainty of certain parameters is too high, and if so, verify if their covariance matrix is mathematically correct (log-normal transformation). 
+
+The conclusions drawn from ENDSAM and the discussions it triggered in the community (5) led **NuclearDataSampler** to avoid backend interpretation. If positive parameters are sampled negatively, any backend patch is not verifiably correct with access to the evaluated distribution. However, if the patch is "acceptable," it may be applied. 
+
+> **Keep cool and call an evaluator**
+
+Similarly, if the covariance matrix is not positive definite and the problematic eigenvalues are only slightly negative, we may correct them. However, if they are significantly negative, we must accept this fact. 
+
+Fixing such issues is the responsibility of the evaluators and should not be "screwdriver-ed" by the user.
+
+*Reference:*
+
+(1) A.J. Koning, S. Hilaire, and M.C. Duijvestijn, *"TALYS: Comprehensive Nuclear Reaction Modeling"*, International Conference on Nuclear Data for Science and Technology, 2007. 
+
+(2) L. Fiorito, *et al.*, [SANDY Repository](https://github.com/luca-fiorito-11/sandy).
+
+(3) K. Tada et al., *"FRENDY (FRom Evaluated Nuclear Data librarY to any application) Code Development"*, JAEA-Data/Code series, Japan Atomic Energy Agency.  
+
+(4) Plevnik, L. and Žerovnik, G., *"Computer code ENDSAM for random sampling and validation of the resonance parameters covariance matrices of some major nuclear data libraries"*, Annals of Nuclear Energy, 2016.  
 DOI: [10.1016/j.anucene.2016.04.026](https://doi.org/10.1016/j.anucene.2016.04.026)
 
-ENDSAM is able to generate random files but was primarily developed to check whether the relative uncertainty of certain parameters is too high, and if so, verify if their covariance matrix is mathematically correct (log-normal transformation). The slightly different strategy in **NuclearDataSampler** is to stick to Normal laws and if it fails, then it fails. Fixing the problem should be done by the evaluators and not "tourneviser" ("screw-drived") by the user.
+(5) Taavitsainen, A. and Vanhanen, R., *"On the maximum entropy distributions of inherently positive nuclear data"*, 2017, Aalto University School of Science, Finland. DOI: [10.1016/j.nima.2016.11.061](https://doi.org/10.1016/j.nima.2016.11.061)
 
 ---
 
@@ -57,7 +71,9 @@ ENDSAM is able to generate random files but was primarily developed to check whe
 
 By construction, this approach works at the evaluated nuclear data level, avoiding additional data-format conversions or embedded nuclear reaction model assumptions. This makes it simple to compare with or feed into other downstream codes.
 
-> **Note**: A mean vector and a covariance matrix uniquely define a (multivariate) Gaussian distribution. By specifying only these two ingredients, we are implicitly stating that uncertainties follow a normal distribution in parameter space. Any more complicated shape would require higher-order moments or parametric expansions.
+> **Note**: A mean vector and a covariance matrix uniquely define a (multivariate) Gaussian distribution. By specifying only these two ingredients, we are implicitly stating that uncertainties follow a normal distribution in parameter space. Any more complicated shape would require higher-order moments or parametric expansions, and at least something to verify our hypothesis or some guidance from evaluated distributions.
+
+Many researchers in the field of UQ have acknowledged the effectiveness of using of LHS sampling, which we have applied in NDSampler and LEAPRSampler.
 
 ---
 
@@ -98,4 +114,29 @@ This will let you edit the code locally and directly test your changes without r
 | - RML                        | :white_check_mark:|         |
 | Cross Sections (groupwise)   | :x:               | Interpolation(1) |
 
-(1) To perturb a MF3 based on its MF33, it is necessary to create an easily interpolable XS. This has been done. What is left is to think of the code organization and the way of perturbing composed cross sections.  
+(1) To perturb a MF3 based on its MF33, it is necessary to create an easily interpolable XS. This has been done. What is left is to think of the code organization and the way of perturbing composed cross sections.
+
+## The (Multivariate) Gaussian Assumption
+
+When we talk about a **mean vector** \( \mu \) and a **covariance matrix** \( \Sigma \), we are specifying a **multivariate Gaussian (normal) distribution**:
+
+\[
+p(\mathbf{x}) = \frac{1}{\sqrt{(2\pi)^n \det(\Sigma)}} \exp\left(-\frac{1}{2} (\mathbf{x} - \mu)^\top \Sigma^{-1} (\mathbf{x} - \mu)\right).
+\]
+
+- \( \mu \in \mathbb{R}^n \) is the vector of means for the \( n \) parameters.
+- \( \Sigma \in \mathbb{R}^{n \times n} \) is the covariance matrix describing pairwise correlations between parameters.
+
+By definition, only specifying \( \mu \) and \( \Sigma \) means that the distribution is **exactly Gaussian**. Any higher-order "shape" information (e.g., skewness, kurtosis, etc.) is zero for a perfect Gaussian. 
+
+If the physical reality demands more complex distributions, we must add more parameters or move beyond the Gaussian assumption.
+
+
+## Contributing
+Contributions are welcome—whether it’s adding new features, fixing bugs, or improving documentation. 
+
+There is still work to be done to address the six types of uncertainties present in nuclear data files: neutron multiplicities, resonance parameters, multigroup cross sections, angular distributions, energy distributions, and fission spectra.
+
+Feel free to explore and adapt the TMC approach with this simple sampling tool. We hope it simplifies your workflows and fosters further comparisons with other uncertainty quantification methods!
+
+&copy; 2025 NuclearDataSampler Contributors
