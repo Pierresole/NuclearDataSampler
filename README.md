@@ -1,6 +1,6 @@
 # NuclearDataSampler
 
-Welcome to **NuclearDataSampler**, a Python-based code aiming to randomly sample evaluated nuclear data files (ENDF) under well-defined, minimal assumptions. This project is part of an effort to explore and compare different approaches to uncertainty quantification (UQ) in nuclear data, including classic sensitivity-based methods and the more direct “Total Monte Carlo” (TMC) approach. 
+Welcome to **NuclearDataSampler**, a Python-based code aiming to randomly sample evaluated nuclear data files (ENDF) under well-defined, minimal assumptions. This project is part of an effort to explore and compare different approaches to uncertainty quantification (UQ) in nuclear data, including classic sensitivity-based methods and the more direct “Total Monte Carlo” (TMC) approach. This python project was motivated by the nice and swift handling of nuclear data file via the use of ENDFtk and its C++ to Python bindings. 
 
 ---
 
