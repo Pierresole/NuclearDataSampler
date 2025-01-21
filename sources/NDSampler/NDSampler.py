@@ -1,12 +1,12 @@
 import h5py
 import numpy as np
 from ENDFtk.tree import Tape
-from .resonance_uncertainty.ResonanceRangeCovariance import ResonanceRangeCovariance
-from .AngularDistributionCovariance import AngularDistributionCovariance
+from .resonance.ResonanceRangeCovariance import ResonanceRangeCovariance
+from .angular.AngularDistributionCovariance import AngularDistributionCovariance
 import datetime
 
 class NDSampler:
-    def __init__(self, endf_tape, covariance_dict=None, hdf5_filename=None):
+    def __init__(self, endf_tape, covariance_dict : dict = None, hdf5_filename = None):
         # Set the HDF5 filename
         if hdf5_filename is None:
             # Generate a default filename based on the current timestamp
@@ -23,7 +23,7 @@ class NDSampler:
 
         # If covariance_dict is None, generate it
         if covariance_dict is None:
-            self.covariance_dict = self._generate_covariance_dict()
+            self.covariance_dict = generate_covariance_dict()
         else:
             self.covariance_dict = covariance_dict
 
@@ -156,6 +156,9 @@ class NDSampler:
 
 
 def generate_covariance_dict(endf_tape):
+    """
+    Generate a dictionary of covariance data from an ENDF tape.
+    """
     covariance_dict = {}
     mat = endf_tape.MAT(endf_tape.material_numbers[0])
 
