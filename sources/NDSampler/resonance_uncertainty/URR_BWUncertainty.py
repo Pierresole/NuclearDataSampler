@@ -2,7 +2,7 @@ import numpy as np
 from collections import defaultdict
 from .ResonanceRangeCovariance import ResonanceRangeCovariance
 from .URR_BreitWigner_Parameters import URREnergyDependent
-from mathmatrix import CovarianceMatrixHandler
+from ..mathmatrix import CovarianceMatrixHandler
 from ENDFtk import tree
 from ENDFtk.MF2.MT151 import ResonanceRange, Isotope, Section
 from scipy.linalg import block_diag  # Import block_diag function

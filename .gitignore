@@ -1,5 +1,5 @@
 __pycache__/*
-trash/
+develop/
 *.h5
 *.hdf5
 *.pyc
