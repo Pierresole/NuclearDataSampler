@@ -4,7 +4,7 @@ Welcome to **NuclearDataSampler**, a Python-based code aiming to randomly sample
 
 ---
 
-## Dependencies and Installation
+## :one: Dependencies and Installation
 
 This project relies on **ENDFtk** for reading and writing ENDF files:
 
@@ -29,7 +29,9 @@ pip install -e .
 ```
 This will let you edit the code locally and directly test your changes without reinstalling.
 
-## Progress Overview
+---
+
+## :two: Progress Overview
 
 | Perturbed Parameters         | Status            | Comment |
 |---                           |           :---:   |---      |
@@ -45,7 +47,23 @@ This will let you edit the code locally and directly test your changes without r
 
 ---
 
-## Introduction: UQ in Particle Transport Physics
+## :three: The Core Idea of NuclearDataSampler
+
+1. **Input**: You provide an ENDF file that contains both the nominal (mean) parameter values and the associated covariance matrix. 
+2. **Sampling**: We draw random samples from the **multivariate Gaussian distribution** parameterized by that mean vector and covariance matrix—no additional re-interpretation or modeling assumptions are introduced.
+3. **Output**: Each random draw updates the relevant sections of the ENDF file, producing a new, consistent ENDF file that reflects one realization of the underlying uncertainties.
+
+By construction, this approach works at the evaluated nuclear data level, avoiding additional data-format conversions or embedded nuclear reaction model assumptions. This makes it simple to compare with or feed into other downstream codes.
+
+> **Note**: A mean vector and a covariance matrix uniquely define a (multivariate) Gaussian distribution. By specifying only these two ingredients, we are implicitly stating that uncertainties follow a normal distribution in parameter space. Any more complicated shape would require higher-order moments or parametric expansions, and at least something to verify our hypothesis or some guidance from evaluated distributions.
+
+Many researchers in the field of UQ have acknowledged the effectiveness of using of LHS sampling, which we have applied in NDSampler and LEAPRSampler.
+
+---
+
+## :four: Context
+
+### UQ in Particle Transport Physics
 
 Uncertainty Quantification (UQ) in particle transport typically involves answering the question: “How do the uncertainties in nuclear cross sections, resonance parameters, and other fundamental data propagate to engineering or physics parameters of interest (e.g., reaction rates, keff in reactor calculations, neutron and neutrinos flux spectrum)?” 
 
@@ -55,7 +73,6 @@ Two common strategies to address this question are:
 
 **NuclearDataSampler** focuses on the TMC idea: given an ENDF file and its uncertainty information (covariances), produce randomized ENDF files ready for downstream usage—without imposing any additional assumptions or re-interpretations.
 
----
 
 ## State of the Art and Motivation
 
@@ -87,7 +104,7 @@ The conclusions drawn from ENDSAM results and the discussions it triggered in th
  
 Diagnosing and communicating such issues is essential for the evaluation of codes. Conversely, "screwdriver-ing" or "quick fixes" to make things work can obscure more serious underlying problems.
 
-*Codes References:*
+*References :link: :*
 
 (1) Koning, A.J., Hilaire, S., and Goriely, S., NRG CEA ULB and IAEA [TALYS Repository](https://nds.iaea.org/talys/). 
 
@@ -102,23 +119,9 @@ DOI: [10.1016/j.anucene.2016.04.026](https://doi.org/10.1016/j.anucene.2016.04.0
 
 ---
 
-## The Core Idea of NuclearDataSampler
-
-1. **Input**: You provide an ENDF file that contains both the nominal (mean) parameter values and the associated covariance matrix. 
-2. **Sampling**: We draw random samples from the **multivariate Gaussian distribution** parameterized by that mean vector and covariance matrix—no additional re-interpretation or modeling assumptions are introduced.
-3. **Output**: Each random draw updates the relevant sections of the ENDF file, producing a new, consistent ENDF file that reflects one realization of the underlying uncertainties.
-
-By construction, this approach works at the evaluated nuclear data level, avoiding additional data-format conversions or embedded nuclear reaction model assumptions. This makes it simple to compare with or feed into other downstream codes.
-
-> **Note**: A mean vector and a covariance matrix uniquely define a (multivariate) Gaussian distribution. By specifying only these two ingredients, we are implicitly stating that uncertainties follow a normal distribution in parameter space. Any more complicated shape would require higher-order moments or parametric expansions, and at least something to verify our hypothesis or some guidance from evaluated distributions.
-
-Many researchers in the field of UQ have acknowledged the effectiveness of using of LHS sampling, which we have applied in NDSampler and LEAPRSampler.
-
----
-
 ## The (Multivariate) Gaussian Assumption
 
-When we talk about a **mean vector** \( \mu \) and a **covariance matrix** \( \Sigma \), we are specifying a **multivariate Gaussian (normal) distribution**:
+When we talk about a **mean vector** $\mu$ and a **covariance matrix** $\Sigma$, we are specifying a **multivariate Gaussian (normal) distribution**:
 
 
 $p(\mathbf{x}) = \frac{1}{\sqrt{(2\pi)^n \det(\Sigma)}} \exp\left(-\frac{1}{2} (\mathbf{x} - \mu)^\top \Sigma^{-1} (\mathbf{x} - \mu)\right).$
@@ -132,7 +135,7 @@ If the physical reality demands more complex distributions, we must add more par
 
 ---
 
-## Contributing
+## :five: Contributing :construction_worker:
 Contributions are welcome—whether it’s adding new features, fixing bugs, or improving documentation. 
 
 There is still work to be done to address the six types of uncertainties present in nuclear data files: neutron multiplicities, resonance parameters, multigroup cross sections, angular distributions, energy distributions, and fission spectra.
