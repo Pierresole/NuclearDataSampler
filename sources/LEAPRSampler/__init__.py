@@ -1,4 +1,4 @@
 from .leaprParser import PerturbLeaprInput
 
-# Exported names when doing "from NDSampler import *"
+# Exported names when doing "from LEAPRSampler import *"
 __all__ = ["PerturbLeaprInput"]

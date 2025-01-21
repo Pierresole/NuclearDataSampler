@@ -1,4 +1,5 @@
-from .ENDFSampler.py import main_function
+from .NDSampler import NDSampler
+from .NDSampler import generate_covariance_dict
 
 # Exported names when doing "from NDSampler import *"
-__all__ = ["main_function", "helper_function"]
+__all__ = ["NDSampler", "generate_covariance_dict"]
