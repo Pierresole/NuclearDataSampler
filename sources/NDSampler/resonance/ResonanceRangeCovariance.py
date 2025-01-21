@@ -44,10 +44,12 @@ class ResonanceRangeCovariance(ABC):
                 # covariance_objects.append(RRRReichMooreUncertainty(mf2_resonance_range, mf32_resonance_range, NER))
                 # return RRRReichMooreUncertainty(mf2_resonance_range, mf32_resonance_range, NER)
             elif LRU == 1 and LRF == 7:
+                from .RMatrixLimited.Uncertainty_RRR import Uncertainty_RML
+                covariance_objects.append(Uncertainty_RML(mf2_resonance_range, mf32_resonance_range, NER))
                 # return RMatrixLimitedCovariance(resonance_range, mf2_resonance_ranges, NER)
                 pass
             elif LRU == 2 and LRF == 2:
-                from .URR_BW_Uncertainty import URRBreitWignerUncertainty
+                from .BreitWigner.Uncertainty_URR import URRBreitWignerUncertainty
                 covariance_objects.append(URRBreitWignerUncertainty(mf2_resonance_range, mf32_resonance_range, NER))
                 # return URRBreitWignerUncertainty(mf2_resonance_range, mf32_resonance_range, NER)
             else:
@@ -202,8 +204,8 @@ class ResonanceRangeCovariance(ABC):
         - sample_index: Index of the sample to use (default is 1, since index 0 is the original value).
         """
         mf2mt151 = tape.MAT(tape.material_numbers[0]).MF(2).MT(151).parse()
-        isotope = mf2mt151.isotopes[0]
-        resonance_ranges = isotope.resonance_ranges.to_list()
+        original_isotope = mf2mt151.isotopes[0]
+        resonance_ranges = original_isotope.resonance_ranges.to_list()
 
         # Create new resonance range
         new_range = ResonanceRange(
@@ -218,9 +220,9 @@ class ResonanceRangeCovariance(ABC):
 
         # Create new isotope with updated resonance ranges
         new_isotope = Isotope(
-            zai=isotope.ZAI,
-            abn=isotope.ABN,
-            lfw=isotope.LFW,
+            zai=original_isotope.ZAI,
+            abn=original_isotope.ABN,
+            lfw=original_isotope.LFW,
             ranges=resonance_ranges
         )
 
