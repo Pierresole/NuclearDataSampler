@@ -8,7 +8,7 @@ from ENDFtk.MF2.MT151 import ResonanceRange, Isotope, Section
 from scipy.linalg import block_diag  # Import block_diag function
 
 
-class URRBreitWignerUncertainty(ResonanceRangeCovariance):
+class Uncertainty_BW_URR(ResonanceRangeCovariance):
     """
     Class for handling uncertainties in the Unresolved Resonance Region (URR) Breit-Wigner parameters.
     NER : int, energy range index

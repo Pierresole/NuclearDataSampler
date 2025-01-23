@@ -30,18 +30,6 @@ class NDSampler:
         # Initialize covariance objects based on covariance_dict
         self.covariance_objects = []
         self._initialize_covariance_objects()
-        
-    def _add_covariance_to_hdf5(self, covariance_objects, covariance_type_name):
-        """
-        Add multiple covariance objects to the HDF5 file.
-        """
-        
-        for covariance_obj in covariance_objects:
-            group_name = covariance_type_name
-            group = self.hdf5_file.require_group(group_name)
-            subgroup_name = covariance_obj.get_covariance_type()
-            subgroup = group.create_group(subgroup_name)
-            covariance_obj.write_to_hdf5(subgroup)
     
     def _initialize_covariance_objects(self):
         mat = self.endf_tape.MAT(self.endf_tape.material_numbers[0])
@@ -64,6 +52,18 @@ class NDSampler:
                             self._add_covariance_to_hdf5(covariance_objects, "AngularDist")
                             pass
                         # Handle other MFs similarly
+        
+    def _add_covariance_to_hdf5(self, covariance_objects, covariance_type_name):
+        """
+        Add multiple covariance objects to the HDF5 file.
+        """
+        
+        for covariance_obj in covariance_objects:
+            group_name = covariance_type_name
+            group = self.hdf5_file.require_group(group_name)
+            subgroup_name = covariance_obj.get_covariance_type()
+            subgroup = group.create_group(subgroup_name)
+            covariance_obj.write_to_hdf5(subgroup)
                             
     @classmethod
     def get_covariance_dict(cls, endf_tape):
@@ -79,7 +79,6 @@ class NDSampler:
         with h5py.File(self.hdf5_filename, 'r') as hdf5_file:
             covariance_objects = []
             for group_name in hdf5_file:
-                print(f"found group {group_name}")
                 group = hdf5_file[group_name]
                     
                 if group_name == 'ResonanceRange':

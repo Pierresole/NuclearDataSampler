@@ -1,8 +1,5 @@
 ## Resonance Range
-from ENDFtk.MF2.MT151 import ResonanceRange
-from ENDFtk.MF2.MT151 import Isotope, Section
-
-from .URR_BW_Uncertainty import URRBreitWignerUncertainty
+from ENDFtk.MF2.MT151 import ResonanceRange, Isotope, Section
 
 import numpy as np
 from abc import ABC, abstractmethod
@@ -33,14 +30,12 @@ class ResonanceCovariance(ABC):
         if LRU == 1 and LRF == 2:
             pass
             # return MultiLevelBreitWignerCovariance(resonance_range, mf2_resonance_ranges, NER)
-        if LRU == 1 and LRF == 3:
-            from .RRR_RM_Uncertainty import RRRReichMooreUncertainty
-            return RRRReichMooreUncertainty(resonance_range, mf2_resonance_ranges, NER)
         if LRU == 1 and LRF == 7:
-            # return RMatrixLimitedCovariance(resonance_range, mf2_resonance_ranges, NER)
-            pass
+            from .RMatrixLimited import Uncertainty_RML_RRR
+            return Uncertainty_RML_RRR(resonance_range, mf2_resonance_ranges, NER)
         elif LRU == 2 and LRF == 1:
-            return URRBreitWignerUncertainty(resonance_range, mf2_resonance_ranges, NER)
+            from .BreitWigner import Uncertainty_BW_URR
+            return Uncertainty_BW_URR(resonance_range, mf2_resonance_ranges, NER)
         else:
             raise NotImplementedError("Resonance covariance format not supported")
      

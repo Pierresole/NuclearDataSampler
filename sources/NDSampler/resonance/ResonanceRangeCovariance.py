@@ -1,7 +1,5 @@
+import ENDFtk
 from ENDFtk.tree import Tape
-## Resonance Range
-from ENDFtk.MF2.MT151 import ResonanceRange
-from ENDFtk.MF2.MT151 import Isotope, Section
 
 import numpy as np
 import h5py
@@ -44,13 +42,13 @@ class ResonanceRangeCovariance(ABC):
                 # covariance_objects.append(RRRReichMooreUncertainty(mf2_resonance_range, mf32_resonance_range, NER))
                 # return RRRReichMooreUncertainty(mf2_resonance_range, mf32_resonance_range, NER)
             elif LRU == 1 and LRF == 7:
-                from .RMatrixLimited.Uncertainty_RRR import Uncertainty_RML
-                covariance_objects.append(Uncertainty_RML(mf2_resonance_range, mf32_resonance_range, NER))
+                from .RMatrixLimited.Uncertainty_RML_RRR import Uncertainty_RML_RRR
+                covariance_objects.append(Uncertainty_RML_RRR(mf2_resonance_range, mf32_resonance_range, NER))
                 # return RMatrixLimitedCovariance(resonance_range, mf2_resonance_ranges, NER)
                 pass
             elif LRU == 2 and LRF == 2:
-                from .BreitWigner.Uncertainty_URR import URRBreitWignerUncertainty
-                covariance_objects.append(URRBreitWignerUncertainty(mf2_resonance_range, mf32_resonance_range, NER))
+                from .BreitWigner.Uncertainty_BW_URR import Uncertainty_BW_URR
+                covariance_objects.append(Uncertainty_BW_URR(mf2_resonance_range, mf32_resonance_range, NER))
                 # return URRBreitWignerUncertainty(mf2_resonance_range, mf32_resonance_range, NER)
             else:
                 raise NotImplementedError(f"Resonance covariance format not supported LRU={LRU}, LRF={LRF}")
@@ -195,7 +193,7 @@ class ResonanceRangeCovariance(ABC):
     #     else:
     #         raise NotImplementedError("Resonance covariance format not supported")
 
-    def _update_resonance_range(self, tape, updated_parameters):
+    def _update_resonance_range(self, tape, updated_parameters : ENDFtk.MF2.MT151.ResonanceParameters):
         """
         Updates the resonance range in the tape with sampled parameters.
 
@@ -208,7 +206,7 @@ class ResonanceRangeCovariance(ABC):
         resonance_ranges = original_isotope.resonance_ranges.to_list()
 
         # Create new resonance range
-        new_range = ResonanceRange(
+        new_range = ENDFtk.MF2.MT151.ResonanceRange(
             el = resonance_ranges[self.NER].EL,
             eh = resonance_ranges[self.NER].EH,
             naps = resonance_ranges[self.NER].NAPS,
@@ -219,7 +217,7 @@ class ResonanceRangeCovariance(ABC):
         resonance_ranges[self.NER] = new_range
 
         # Create new isotope with updated resonance ranges
-        new_isotope = Isotope(
+        new_isotope = ENDFtk.MF2.MT151.Isotope(
             zai=original_isotope.ZAI,
             abn=original_isotope.ABN,
             lfw=original_isotope.LFW,
@@ -227,7 +225,7 @@ class ResonanceRangeCovariance(ABC):
         )
 
         # Create new section with the updated isotope
-        new_section = Section(
+        new_section = ENDFtk.MF2.MT151.Section(
             zaid=mf2mt151.ZA,
             awr=mf2mt151.AWR,
             isotopes=[new_isotope]
@@ -262,7 +260,7 @@ class ResonanceRangeCovariance(ABC):
                 # Obtain updated parameters for the sample index
                 updated_parameters = self.update_resonance_parameters(sample_index)
                 # Create a new resonance range with the updated parameters
-                updated_rr = ResonanceRange(
+                updated_rr = ENDFtk.MF2.MT151.ResonanceRange(
                     EL=rr.EL,
                     EH=rr.EH,
                     LRU=rr.LRU,
@@ -275,14 +273,14 @@ class ResonanceRangeCovariance(ABC):
                 updated_ranges.append(rr)
 
         # Reconstruct the isotope and section
-        new_isotope = Isotope(
+        new_isotope = ENDFtk.MF2.MT151.Isotope(
             zai=isotope.ZAI,
             abn=isotope.ABN,
             lfw=isotope.LFW,
             ranges=updated_ranges
         )
 
-        new_section = Section(
+        new_section = ENDFtk.MF2.MT151.Section(
             zaid=mf2mt151.ZA,
             awr=mf2mt151.AWR,
             isotopes=[new_isotope]
@@ -312,12 +310,14 @@ class ResonanceRangeCovariance(ABC):
     @staticmethod
     def read_hdf5_group(group, covariance_objects):
         for subgroup_name in group:
-            print(f"found subgroup {subgroup_name}")
             subgroup = group[subgroup_name]
             
             if subgroup_name == 'URR_BreitWigner':
-                from .URR_BW_Uncertainty import URRBreitWignerUncertainty
-                covariance_obj = URRBreitWignerUncertainty.read_from_hdf5(subgroup)
+                from .BreitWigner.Uncertainty_BW_URR import Uncertainty_BW_URR
+                covariance_obj = Uncertainty_BW_URR.read_from_hdf5(subgroup)
+            elif subgroup_name == 'Uncertainty_RML_RRR':
+                from .RMatrixLimited.Uncertainty_RML_RRR import Uncertainty_RML_RRR
+                covariance_obj = Uncertainty_RML_RRR.read_from_hdf5(subgroup)
             else:
                 # Handle other covariance types
                 pass
