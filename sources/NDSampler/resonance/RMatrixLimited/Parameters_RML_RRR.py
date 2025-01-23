@@ -53,200 +53,174 @@ class Resonance:
         return instance
 
 @dataclass
-class Channels:
+class Channel:
     """
-    Stores channel data (spin, parity, etc.) 
-    and handles extraction, reconstruction, and HDF5 I/O.
+    Stores single channel properties
     """
-    spin: float
-    parity: float
-    ppi: List[int] = field(default_factory=list)
-    l: List[int] = field(default_factory=list)
-    s: List[float] = field(default_factory=list)
-    b: List[float] = field(default_factory=list)
-    apt: List[float] = field(default_factory=list)
-    ape: List[float] = field(default_factory=list)
-    kbk: int = 0
-    kps: int = 0
-
-    def extract_parameters(self, endf_channels):
-        """
-        Extract channel data from an ENDFtk object or similar structure.
-        """
-        # Example usage with hypothetical attributes:
-        self.spin = endf_channels.AJ
-        self.parity = endf_channels.PJ
-        self.ppi = list(endf_channels.PPI)
-        self.l = list(endf_channels.L)
-        self.s = list(endf_channels.SCH)
-        self.b = list(endf_channels.BND)
-        self.apt = list(endf_channels.APT)
-        self.ape = list(endf_channels.APE)
-        self.kbk = endf_channels.KBK
-        self.kps = endf_channels.KPS
+    ppi: int
+    l: int  
+    s: float
+    b: float
+    apt: float
+    ape: float
 
     @classmethod
-    def from_endftk(cls, endf_channels):
-        """
-        Creates a Channels instance from an ENDFtk representation.
-        """
-        instance = cls(
-            spin=endf_channels.AJ,
-            parity=endf_channels.PJ,
-            ppi=list(endf_channels.PPI),
-            l=list(endf_channels.L),
-            s=list(endf_channels.SCH),
-            b=list(endf_channels.BND),
-            apt=list(endf_channels.APT),
-            ape=list(endf_channels.APE),
-            kbk=endf_channels.KBK,
-            kps=endf_channels.KPS
+    def from_endftk(cls, endf_channels, channel_index):
+        """Creates a Channel instance from an ENDFtk channel at given index"""
+        return cls(
+            ppi=endf_channels.PPI[channel_index],
+            l=endf_channels.L[channel_index],
+            s=endf_channels.SCH[channel_index],
+            b=endf_channels.BND[channel_index],
+            apt=endf_channels.APT[channel_index],
+            ape=endf_channels.APE[channel_index]
         )
-        return instance
-
-    def reconstruct(self) -> ENDFtk.MF2.MT151.ResonanceChannels:
-        """
-        Builds an ENDFtk-like object from the stored channel data.
-        """
-        # Return or assemble a custom object mirroring ENDFtk's channel structure
-        # Minimal placeholder:
-        
-        return ENDFtk.MF2.MT151.ResonanceChannels(  spin = self.spin,
-                                                    parity = self.parity,
-                                                    ppi = self.ppi,
-                                                    l = self.l,
-                                                    s = self.s,
-                                                    b = self.b,
-                                                    apt = self.apt,
-                                                    ape = self.ape,
-                                                    kbk = self.kbk,
-                                                    kps = self.kps )
 
     def write_to_hdf5(self, hdf5_group):
-        """
-        Writes channel data to the given HDF5 group.
-        """
-        hdf5_group.attrs['spin'] = self.spin
-        hdf5_group.attrs['parity'] = self.parity
-        hdf5_group.create_dataset('ppi', data=self.ppi)
-        hdf5_group.create_dataset('l', data=self.l)
-        hdf5_group.create_dataset('s', data=self.s)
-        hdf5_group.create_dataset('b', data=self.b)
-        hdf5_group.create_dataset('apt', data=self.apt)
-        hdf5_group.create_dataset('ape', data=self.ape)
-        hdf5_group.attrs['kbk'] = self.kbk
-        hdf5_group.attrs['kps'] = self.kps
+        """Writes channel data to HDF5"""
+        for attr in ['ppi', 'l', 's', 'b', 'apt', 'ape']:
+            hdf5_group.attrs[attr] = getattr(self, attr)
 
-    @classmethod
+    @classmethod 
     def read_from_hdf5(cls, hdf5_group):
-        """
-        Reads channel data from the given HDF5 group.
-        """
-        spin = hdf5_group.attrs['spin']
-        parity = hdf5_group.attrs['parity']
-        ppi = list(hdf5_group['ppi'][()])
-        l_ = list(hdf5_group['l'][()])
-        s_ = list(hdf5_group['s'][()])
-        b_ = list(hdf5_group['b'][()])
-        apt = list(hdf5_group['apt'][()])
-        ape = list(hdf5_group['ape'][()])
-        kbk = hdf5_group.attrs['kbk']
-        kps = hdf5_group.attrs['kps']
+        """Reads channel data from HDF5"""
+        return cls(**{attr: hdf5_group.attrs[attr] 
+                     for attr in ['ppi', 'l', 's', 'b', 'apt', 'ape']})
 
-        return cls(
-            spin=spin,
-            parity=parity,
-            ppi=ppi,
-            l=l_,
-            s=s_,
-            b=b_,
-            apt=apt,
-            ape=ape,
-            kbk=kbk,
-            kps=kps
-        )
-
-
-@dataclass
+@dataclass 
 class SpinGroup:
-    """Class to store spin group data, including a list of Resonance objects."""
-    ResonanceChannels: Channels
-    ResonanceParameters: List[Resonance] = field(default_factory=list)
-
-    def extract_parameters(self, spingroup: ENDFtk.MF2.MT151.SpinGroup):
-        self.ResonanceChannels = ENDFtk.MF2.MT151.ResonanceChannels(spingroup.channels)
-        # Create a single Resonance for this SpinGroup (or multiple if needed)
-        new_resonance = Resonance()
-        new_resonance.extract_parameters(spingroup.parameters)
-        self.ResonanceParameters.append(new_resonance)
+    """Class to store spin group data, including channels and resonances"""
+    spin: float
+    parity: float
+    kbk: int  
+    kps: int
+    channels: List[Channel] = field(default_factory=list)
+    resonance_parameters: List[Resonance] = field(default_factory=list)
 
     @classmethod
     def from_endftk(cls, spingroup: ENDFtk.MF2.MT151.SpinGroup, spingroup32):
-        """
-        Creates a SpinGroup from an ENDFtk SpinGroup object, 
-        cascading to Channels.from_endftk and Resonance.from_endftk.
-        """
-        return cls(ResonanceChannels = Channels.from_endftk(spingroup.channels), 
-                   ResonanceParameters = [Resonance.from_endftk(spingroup.parameters.ER[i],
-                                                                spingroup32.parameters.DER[i],
-                                                                spingroup.parameters.GAM[i][:spingroup.NCH],
-                                                                spingroup32.parameters.DGAM[i][:spingroup.NCH]) 
-                                          for i in range(spingroup.parameters.NRS)
-                                        ]
-                   )
-    
-    def reconstruct(self, sample_index : int = 0) -> ENDFtk.MF2.MT151.SpinGroup:
-        # Combine all Resonance objects into a single ENDFtk ResonanceParameters                
+        """Create SpinGroup from ENDFtk objects"""
+        channels = [
+            Channel.from_endftk(spingroup.channels, i) 
+            for i in range(spingroup.NCH)
+        ]
         
-        return ENDFtk.MF2.MT151.SpinGroup(channels = self.ResonanceChannels.reconstruct(), 
-                                          parameters = ENDFtk.MF2.MT151.ResonanceParameters(
-                                                            energies=[res.ER[sample_index] for res in self.ResonanceParameters],
-                                                            parameters=[[gam[sample_index] for gam in res.GAM] for res in self.ResonanceParameters]
-                                                        ))
-        
-    # def reconstruct(self, sample_index) -> ENDFtk.MF2.MT151.SpinGroup:
-    #     # Combine all Resonance objects into a single ENDFtk ResonanceParameters
-    #     combined_ER = []
-    #     combined_GAM = []
-    #     for res in self.ResonanceParameters:
-    #         combined_ER.append(res.ER[sample_index])
-    #         for gam in res.GAM:
-    #             combined_GAM.append(gam[sample_index])
-    #     parameters = ENDFtk.MF2.MT151.ResonanceParameters(energies = combined_ER, parameters = combined_GAM)
-        
-    #     return ENDFtk.MF2.MT151.SpinGroup(channels = self.ResonanceChannels.reconstruct(), parameters = parameters)
+        resonances = [
+            Resonance.from_endftk(
+                spingroup.parameters.ER[i],
+                spingroup32.parameters.DER[i],
+                spingroup.parameters.GAM[i][:spingroup.NCH],
+                spingroup32.parameters.DGAM[i][:spingroup.NCH]
+            ) 
+            for i in range(spingroup.parameters.NRS)
+        ]
+
+        return cls(
+            spin=spingroup.channels.AJ,
+            parity=spingroup.channels.PJ, 
+            kbk=spingroup.channels.KBK,
+            kps=spingroup.channels.KPS,
+            channels=channels,
+            resonance_parameters=resonances
+        )
+
+    def reconstruct(self, sample_index: int = 0) -> ENDFtk.MF2.MT151.SpinGroup:
+        """Reconstruct ENDFtk SpinGroup from this object"""
+        channels = ENDFtk.MF2.MT151.ResonanceChannels(
+            spin=self.spin,
+            parity=self.parity,
+            kbk=self.kbk,
+            kps=self.kps,
+            ppi=[ch.ppi for ch in self.channels],
+            l=[ch.l for ch in self.channels],
+            s=[ch.s for ch in self.channels],
+            b=[ch.b for ch in self.channels],
+            apt=[ch.apt for ch in self.channels],
+            ape=[ch.ape for ch in self.channels]
+        )
+
+        parameters = ENDFtk.MF2.MT151.ResonanceParameters(
+            energies=[res.ER[sample_index] for res in self.resonance_parameters],
+            parameters=[[gam[sample_index] for gam in res.GAM] 
+                       for res in self.resonance_parameters]
+        )
+
+        return ENDFtk.MF2.MT151.SpinGroup(
+            channels=channels,
+            parameters=parameters
+        )
+
+    def channelPenetrationAndShift(self, channel_index: int, rho: float):
+        """Compute penetration and shift using channel angular momentum"""
+        l = self.channels[channel_index].l
+        import math
+
+        if l < 0:
+            raise ValueError("l must be a non-negative integer.")
+
+        P, S = 0.0, 0.0
+        rho2 = rho ** 2
+
+        if rho2 >= 0:
+            # Positive energy channel
+            if l == 0:
+                P = rho
+            else:
+                P_prev, S_prev = rho, 0.0
+                for i in range(1, l + 1):
+                    denom = (i - S_prev) ** 2 + P_prev ** 2
+                    P = (rho2 * P_prev) / denom
+                    S = (rho2 * (i - S_prev)) / denom - i
+                    P_prev, S_prev = P, S
+        else:
+            # Negative energy channel
+            if l == 0:
+                S = -math.sqrt(-rho2)
+            else:
+                S_prev = -math.sqrt(-rho2)
+                for i in range(1, l + 1):
+                    S = (rho2 / (i - S_prev)) - i
+                    S_prev = S
+
+        return P, S
 
     def write_to_hdf5(self, hdf5_group):
-        """
-        Writes this SpinGroup's data to the given HDF5 group.
-        """
-        
-        self.ResonanceChannels.write_to_hdf5(hdf5_group.create_group('Channels'))
+        """Write spin group data to HDF5"""
+        for attr in ['spin', 'parity', 'kbk', 'kps']:
+            hdf5_group.attrs[attr] = getattr(self, attr)
+            
+        ch_group = hdf5_group.create_group('Channels')
+        for i, channel in enumerate(self.channels):
+            channel.write_to_hdf5(ch_group.create_group(f'Channel_{i}'))
 
         rp_group = hdf5_group.create_group('Resonances')
-        for idx, res in enumerate(self.ResonanceParameters):
-            res_group = rp_group.create_group(f'Resonance_{idx}')
-            res.write_to_hdf5(res_group)
+        for i, res in enumerate(self.resonance_parameters):
+            res.write_to_hdf5(rp_group.create_group(f'Resonance_{i}'))
 
     @classmethod
     def read_from_hdf5(cls, hdf5_group):
-        """
-        Reads a SpinGroup from the given HDF5 group.
-        """
-        # Reconstruct Channels from HDF5
-        resonance_channels = Channels.read_from_hdf5(hdf5_group['Channels'])
+        """Read spin group data from HDF5"""
+        channels = []
+        for ch_key in sorted(hdf5_group['Channels'].keys()):
+            channels.append(Channel.read_from_hdf5(hdf5_group['Channels'][ch_key]))
 
-        resonance_list = []
-        if 'Resonances' in hdf5_group:
-            for r_key in hdf5_group['Resonances']:
-                r_subgroup = hdf5_group['Resonances'][r_key]
-                resonance_list.append(Resonance.read_from_hdf5(r_subgroup))
-        return cls(ResonanceChannels=resonance_channels, ResonanceParameters=resonance_list)
+        resonances = []
+        for res_key in sorted(hdf5_group['Resonances'].keys()):
+            resonances.append(Resonance.read_from_hdf5(hdf5_group['Resonances'][res_key]))
+
+        return cls(
+            spin=hdf5_group.attrs['spin'],
+            parity=hdf5_group.attrs['parity'],
+            kbk=hdf5_group.attrs['kbk'],
+            kps=hdf5_group.attrs['kps'],
+            channels=channels,
+            resonance_parameters=resonances
+        )
 
     def getListStandardDeviation(self, spin_group_idx: int):
         index_mapping = []
         ListStandardDeviation = []
-        for r_idx, resonance in enumerate(self.ResonanceParameters):
+        for r_idx, resonance in enumerate(self.resonance_parameters):
             if resonance.DER is not None:
                 ListStandardDeviation.append(resonance.DER)
                 index_mapping.append((spin_group_idx, r_idx, 0))
@@ -452,7 +426,7 @@ class RMatrixLimited:
         """
         parameters = []
         for spin_group in self.ListSpinGroup:
-            for resonance in spin_group.ResonanceParameters:
+            for resonance in spin_group.resonance_parameters:
                 # Add resonance energy
                 parameters.append(resonance.ER[0])
                 # Add partial widths
