@@ -97,32 +97,60 @@ class SpinGroup:
     channels: List[Channel] = field(default_factory=list)
     resonance_parameters: List[Resonance] = field(default_factory=list)
 
-    @classmethod
-    def from_endftk(cls, spingroup: ENDFtk.MF2.MT151.SpinGroup, spingroup32):
-        """Create SpinGroup from ENDFtk objects"""
-        channels = [
-            Channel.from_endftk(spingroup.channels, i) 
-            for i in range(spingroup.NCH)
-        ]
-        
-        resonances = [
-            Resonance.from_endftk(
-                spingroup.parameters.ER[i],
-                spingroup32.parameters.DER[i],
-                spingroup.parameters.GAM[i][:spingroup.NCH],
-                spingroup32.parameters.DGAM[i][:spingroup.NCH]
-            ) 
-            for i in range(spingroup.parameters.NRS)
-        ]
+    def _convert_to_reduced_width(self, width: float, channel_idx: int, energy: float) -> float:
+        """Convert physical width to reduced width using penetrability"""
+        import numpy as np
+        if width == 0.0:
+            return 0.0
+            
+        P, _ = self.channelPenetrationAndShift(channel_idx, energy)
+        if P <= 0.0:
+            return 0.0
+            
+        return np.sign(width) * np.sqrt(abs(width)/(2*P))
 
-        return cls(
+    @classmethod
+    def from_endftk(cls, spingroup: ENDFtk.MF2.MT151.SpinGroup, spingroup32, force_reduced: bool = False):
+        """Create SpinGroup from ENDFtk objects with optional reduced width conversion"""
+        instance = cls(
             spin=spingroup.channels.AJ,
-            parity=spingroup.channels.PJ, 
+            parity=spingroup.channels.PJ,
             kbk=spingroup.channels.KBK,
             kps=spingroup.channels.KPS,
-            channels=channels,
-            resonance_parameters=resonances
+            channels=[Channel.from_endftk(spingroup.channels, i) 
+                     for i in range(spingroup.NCH)]
         )
+
+        if force_reduced:
+            resonances = []
+            for i in range(spingroup.parameters.NRS):
+                energy = spingroup.parameters.ER[i]
+                widths = [instance._convert_to_reduced_width(
+                            spingroup.parameters.GAM[i][ch_idx], 
+                            ch_idx,
+                            energy)
+                         for ch_idx in range(spingroup.NCH)]
+                
+                resonances.append(
+                    Resonance.from_endftk(
+                        energy,
+                        spingroup32.parameters.DER[i],
+                        widths,
+                        spingroup32.parameters.DGAM[i][:spingroup.NCH]
+                    )
+                )
+        else:
+            resonances = [
+                Resonance.from_endftk(
+                    spingroup.parameters.ER[i],
+                    spingroup32.parameters.DER[i],
+                    spingroup.parameters.GAM[i][:spingroup.NCH],
+                    spingroup32.parameters.DGAM[i][:spingroup.NCH]
+                ) for i in range(spingroup.parameters.NRS)
+            ]
+
+        instance.resonance_parameters = resonances
+        return instance
 
     def reconstruct(self, sample_index: int = 0) -> ENDFtk.MF2.MT151.SpinGroup:
         """Reconstruct ENDFtk SpinGroup from this object"""
@@ -334,20 +362,23 @@ class RMatrixLimited:
     ListSpinGroup: List[SpinGroup] = field(default_factory=list)
     
     @classmethod
-    def from_endftk(cls, range: ENDFtk.MF2.MT151.ResonanceRange, mf32_range: ENDFtk.MF32.MT151.ResonanceRange):
+    def from_endftk(cls, range: ENDFtk.MF2.MT151.ResonanceRange, mf32_range: ENDFtk.MF32.MT151.ResonanceRange, force_reduced : bool = False):
         """
         Creates an instance of RMatrixLimited from an ENDFtk ResonanceRange object,
         calling from_endftk in cascade for ParticlePair and SpinGroup.
         """
+        if range.parameters.IFG == 1:
+            force_reduced = False
+
         particle_pairs = ParticlePair.from_endftk(range.parameters.particle_pairs)
         
         spin_groups = [
-                SpinGroup.from_endftk(sgroup, mf32_range.parameters.uncertainties.spin_groups.to_list()[isg]) 
+                SpinGroup.from_endftk(sgroup, mf32_range.parameters.uncertainties.spin_groups.to_list()[isg], force_reduced) 
                 for isg, sgroup in enumerate(range.parameters.spin_groups.to_list()) 
             ]
-        
+                
         return cls(
-            IFG=range.parameters.IFG,
+            IFG=1 if force_reduced else range.parameters.IFG,
             KRL=range.parameters.KRL,
             KRM=range.parameters.KRM,
             ParticlePairs=particle_pairs,
