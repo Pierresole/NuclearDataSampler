@@ -72,7 +72,7 @@ class NDSampler:
         sampler.hdf5_file.close()
         return sampler.covariance_dict
        
-    def load_and_sample_covariance_objects(self, num_samples):
+    def load_and_sample_covariance_objects(self, num_samples: int = 1):
         """
         Loads covariance data from the HDF5 file and generates samples.
         """
@@ -80,12 +80,17 @@ class NDSampler:
             covariance_objects = []
             for group_name in hdf5_file:
                 group = hdf5_file[group_name]
-                    
                 if group_name == 'ResonanceRange':
                     ResonanceRangeCovariance.read_hdf5_group(group, covariance_objects)
                 else:
                     # Handle other covariance types
                     pass
+
+            # Reassign self.rml_data if one of the covariance objects has it:
+            # e.g. something like:
+            # for cov_obj in covariance_objects:
+            #     if hasattr(cov_obj, 'rml_data'):
+            #         self.rml_data = cov_obj.rml_data
 
             for i in range(num_samples):
                 print(f"Generating sample {i+1}...")

@@ -21,13 +21,13 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         start_time = time.time()
         self.rml_data = RMatrixLimited.from_endftk(mf2_resonance_ranges, mf32_resonance_range)
         print(f"Time for RMatrixLimited.from_endftk: {time.time() - start_time:.4f} seconds")
-
+        
         self.index_mapping = []
 
         start_time = time.time()
         self.extract_covariance_matrix(mf32_resonance_range)
         print(f"Time for extract_covariance_matrix: {time.time() - start_time:.4f} seconds")
-
+        
         start_time = time.time()
         self.compute_L_matrix()
         print(f"Time for compute_L_matrix: {time.time() - start_time:.4f} seconds")
@@ -124,13 +124,14 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         """
         if mode not in ['stack', 'replace']:
             raise ValueError("Mode must be either 'stack' or 'replace'")
-
+    
         # Generate standard normal random variables
         random_vector = np.random.normal(size=self.L_matrix.shape[0])
         
         # Calculate correlated samples: mean + L @ random
         
         nominal_parameters = self.rml_data.get_nominal_parameters()
+
         sampled_values = nominal_parameters + self.L_matrix @ random_vector
         # Map the sampled values back to the data structure using index_mapping
         for sample_idx, (spin_group_idx, resonance_idx, param_idx) in enumerate(self.index_mapping):
@@ -156,7 +157,7 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         Extracts the covariance matrix using the method from the base class.
         """
         if mf32_range.parameters.LCOMP == 2:
-            self.extract_covariance_matrix_LCOMP2(mf32_range)
+            self.extract_covariance_matrix_LCOMP2(mf32_range, True)
         else:
             raise ValueError(f"Unsupported LCOMP value: {mf32_range.parameters.LCOMP}")
         
@@ -167,7 +168,7 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
             for P_idx in range(len(R_value.GAM) + 1)  # Number of channels plus the energy
         ]
     
-    def extract_covariance_matrix_LCOMP2(self, mf32_range):
+    def extract_covariance_matrix_LCOMP2(self, mf32_range, to_reduced: bool = True):
         """
         Reconstructs the covariance matrix from standard deviations and correlation coefficients when LCOMP == 2.
         """
@@ -192,14 +193,19 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
             correlation_matrix[j, i] = corr_value  # Symmetric matrix
         
         # Now, compute the covariance matrix
-        std_devs = []
-        for spingroup in mf32_range.parameters.uncertainties.spin_groups.to_list():
-            for iER, DER in enumerate(spingroup.parameters.DER[:]):
-                std_devs.append(DER)
-                for iCH in range(spingroup.NCH):
-                    std_devs.append(spingroup.parameters.DGAM[iER][iCH])
+        std_devs = self.rml_data.get_non_none_std_devs()
+        # for spingroup in mf32_range.parameters.uncertainties.spin_groups.to_list():
+        #     for iER, DER in enumerate(spingroup.parameters.DER[:]):
+        #         std_devs.append(DER)
+        #         for iCH in range(spingroup.NCH):
+        #             std_devs.append(spingroup.parameters.DGAM[iER][iCH])
 
         covariance_matrix = np.outer(std_devs, std_devs) * correlation_matrix
+        
+        # Convert to reduced covariance matrix
+        if to_reduced:
+            covariance_matrix = self.rml_data.extract_covariance_matrix_LCOMP2(covariance_matrix)
+        
         self.covariance_matrix = covariance_matrix
 
     def construct_mean_vector(self):
@@ -323,8 +329,9 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
 
         # Read rml_data
         rml_data_group = hdf5_group['Parameters']
+                
         rml_data = RMatrixLimited.read_from_hdf5(rml_data_group)
-
+        
         # Create an instance and set attributes
         instance = cls.__new__(cls)
         instance.NER = NER
