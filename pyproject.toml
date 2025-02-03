@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "NuclearDataSampler"
+version = "0.0.0"
+description = "Sample Nuclear Data Files"
+authors = [{name = "SOLE Pierre", email = "pierre.sole@asnr.fr"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.6"
+dependencies = [
+    "h5py>=3.12.1",
+    "numpy>=2.2.2",
+    "pyDOE3>=1.0.4",
+    "scipy>=1.15.1"
+]
+
+[tool.setuptools]
+packages = ["sources"]
