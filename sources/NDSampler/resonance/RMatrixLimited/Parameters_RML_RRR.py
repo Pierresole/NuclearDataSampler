@@ -189,18 +189,21 @@ class SpinGroup:
         # Find the specific pair for this channel
         pair_index = self.channels[channel_idx].ppi
         channel_pair = self.all_pairs[pair_index-1]
-        Gamma0 = self.ResonanceParameters[resonance_idx].GAM[channel_idx][0]
+        # Width is reduced
+        gamma0 = self.ResonanceParameters[resonance_idx].GAM[channel_idx][0]
         
         # Penetrability for a photon is P=1 (but why ?)
         if channel_pair.pnt == -1 or (channel_pair.pnt == 0 and channel_pair.mt in [19, 102]):
             P = 1.0
         else:
-            P = self.channels[channel_idx].PenetrationFactor(E_resonance_lab, entrance_pair)
+            P,_ = self.channelPenetrationAndShift(E_resonance_lab, channel_idx, entrance_pair)
+            # P = self.channels[channel_idx].PenetrationFactor(E_resonance_lab, entrance_pair)
             
-        if P <= 0 or Gamma0 == 0:
+        if P <= 0 or gamma0 == 0:
             return 0
         
-        return 1 / (2 * np.sqrt(2 * P * abs(Gamma0)))
+        # return 1 / (2 * np.sqrt(2 * P * abs(Gamma0)))
+        return 1 / ( 4 * P * gamma0 )
 
     def _convert_to_reduced_width(self, width: float, width_uncertainty: Optional[float], channel_idx: int, E_lab: float, entrance_pair: ParticlePair) -> Tuple[float, float]:
         """
@@ -210,7 +213,7 @@ class SpinGroup:
         """
         import numpy as np
         if width == 0.0:
-            return 0.0, 0.0
+            return 0.0, width_uncertainty
 
         # Find the specific pair for this channel
         pair_index = self.channels[channel_idx].ppi
@@ -220,7 +223,8 @@ class SpinGroup:
         if channel_pair.pnt == -1 or (channel_pair.pnt == 0 and channel_pair.mt in [19, 102]):
             P = 1.0
         else:
-            P = self.channels[channel_idx].PenetrationFactor(E_lab, entrance_pair)
+            P,_ = self.channelPenetrationAndShift(E_lab, channel_idx, entrance_pair)
+            # P = self.channels[channel_idx].PenetrationFactor(E_lab, entrance_pair)
 
         if P <= 0.0:
             return 0.0, 0.0
@@ -297,16 +301,18 @@ class SpinGroup:
             parameters=parameters
         )
 
-    def channelPenetrationAndShift(self, channel_index: int, rho: float):
+    def channelPenetrationAndShift(self, E_lab: float, channel_index: int, entrance_pair: ParticlePair):
         """Compute penetration and shift using channel angular momentum"""
-        l = self.channels[channel_index].l
         import math
+        
+        l = self.channels[channel_index].l
+        rho2 = abs(entrance_pair.k2(E_lab)) * (self.channels[channel_index].apt ** 2)
 
         if l < 0:
             raise ValueError("l must be a non-negative integer.")
 
         P, S = 0.0, 0.0
-        rho2 = rho ** 2
+        rho = math.sqrt(rho2)
 
         if rho2 >= 0:
             # Positive energy channel
@@ -601,7 +607,6 @@ class RMatrixLimited:
         each element with the corresponding diagonal entries of J.
         """
         J = self.get_jacobian_diagonal()  # J is just a list of diagonal values
-        print(J)
         for i in range(len(J)):
             for j in range(len(J)):
                 covariance_matrix[i][j] *= J[i] * J[j]
