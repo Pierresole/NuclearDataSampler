@@ -91,16 +91,22 @@ class NDSampler:
             # for cov_obj in covariance_objects:
             #     if hasattr(cov_obj, 'rml_data'):
             #         self.rml_data = cov_obj.rml_data
+            if num_samples == 0:
+                endf_tape = self.original_tape
+                for covariance_obj in covariance_objects:
+                    covariance_obj.update_tape(endf_tape, 0)
+                endf_tape.to_file(f'sampled_tape_random0.endf')
+                return
 
-            for i in range(num_samples):
-                print(f"Generating sample {i+1}...")
+            for i in range(1, num_samples + 1):
+                print(f"Generating sample {i}...")
                 endf_tape = self.original_tape
                 for covariance_obj in covariance_objects:
                     covariance_obj.sample_parameters()
                     covariance_obj.update_tape(endf_tape, i)
                 
                 # Write the sampled tape to a file
-                endf_tape.to_file(f'sampled_tape_{i+1}.endf')
+                endf_tape.to_file(f'sampled_tape_random{i}.endf')
                 
     def test_sample_covariance_objects(self, num_samples):
         """
