@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "NuclearDataSampler"
-version = "0.0.0"
+version = "0.0.1"
 description = "Sample Nuclear Data Files"
 authors = [{name = "SOLE Pierre", email = "pierre.sole@asnr.fr"}]
 license = {text = "MIT"}
