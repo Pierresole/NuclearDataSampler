@@ -360,6 +360,7 @@ class SpinGroup:
         resonances = []
         for res_key in sorted(hdf5_group['Resonances'].keys()):
             resonances.append(Resonance.read_from_hdf5(hdf5_group['Resonances'][res_key]))
+        resonances.sort(key=lambda res: res.ER[0])
 
         return cls(
             spin=hdf5_group.attrs['spin'],
