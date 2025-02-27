@@ -253,6 +253,7 @@ class SpinGroup:
             channels=[Channel.from_endftk(spingroup2.channels, i) for i in range(spingroup2.NCH)], all_pairs=all_pairs if all_pairs else []
         )
 
+        # ENtrance should not be none here, right ?
         if force_reduced and entrance_pair is not None:
             resonances = []
             for i in range(spingroup2.parameters.NRS):
@@ -360,6 +361,7 @@ class SpinGroup:
         resonances = []
         for res_key in sorted(hdf5_group['Resonances'].keys()):
             resonances.append(Resonance.read_from_hdf5(hdf5_group['Resonances'][res_key]))
+        resonances.sort(key=lambda res: res.ER[0])
 
         return cls(
             spin=hdf5_group.attrs['spin'],
