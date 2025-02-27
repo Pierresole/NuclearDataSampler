@@ -223,7 +223,7 @@ class SpinGroup:
         if channel_pair.pnt == -1 or (channel_pair.pnt == 0 and channel_pair.mt in [19, 102]):
             P = 1.0
         else:
-            P,_ = self.channelPenetrationAndShift(E_lab, channel_idx, entrance_pair)
+            P,_ = self.channelPenetrationAndShift(np.abs(E_lab), channel_idx, entrance_pair)
             # P = self.channels[channel_idx].PenetrationFactor(E_lab, entrance_pair)
 
         if P <= 0.0:
