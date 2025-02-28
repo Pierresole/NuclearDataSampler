@@ -124,15 +124,30 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         """
         if mode not in ['stack', 'replace']:
             raise ValueError("Mode must be either 'stack' or 'replace'")
-    
+
         # Generate standard normal random variables
         random_vector = np.random.normal(size=self.L_matrix.shape[0])
         
-        # Calculate correlated samples: mean + L @ random
-        
+        # Calculate correlated samples
         nominal_parameters = self.rml_data.get_nominal_parameters()
-
-        sampled_values = nominal_parameters + self.L_matrix @ random_vector
+        correlated_samples = self.L_matrix @ random_vector
+        
+        # If IFG==0, theoritical values are provided and are positive, so we need to keep the sign
+        if self.rml_data.IFG == 0:
+            # Sign-preserving sampling for IFG=0
+            signs = np.sign(nominal_parameters)
+            # For parameters with zero nominal value, default to positive sign
+            signs[signs == 0] = 1
+            
+            # Compute absolute values of the perturbed values, then apply the original signs
+            perturbed_values = nominal_parameters + correlated_samples
+            sampled_values = signs * np.abs(perturbed_values)
+        else:  # IFG == 1
+            # Standard Gaussian sampling for IFG=1
+            sampled_values = nominal_parameters + correlated_samples
+            
+        # What about E : I don't know if the dummy resonance must keep a negative energy
+        
         # Map the sampled values back to the data structure using index_mapping
         for sample_idx, (spin_group_idx, resonance_idx, param_idx) in enumerate(self.index_mapping):
             spin_group = self.rml_data.ListSpinGroup[spin_group_idx]
