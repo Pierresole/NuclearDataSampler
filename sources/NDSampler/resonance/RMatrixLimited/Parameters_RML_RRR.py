@@ -408,6 +408,8 @@ class RMatrixLimited:
         else:
             force_reduced = True
             
+        # Temp Pierre 28/05/2025
+        force_reduced = False    
 
         all_pairs = []
         for i in range(mf2_range.parameters.particle_pairs.NPP):
@@ -442,7 +444,7 @@ class RMatrixLimited:
         ]
 
         return cls(
-            IFG=1, # IFG is always 1 after conversion, default force reduced
+            IFG=0 if force_reduced == False else 1,  # IFG is 0 if not force reduced, otherwise 1
             KRL=mf2_range.parameters.KRL,
             KRM=mf2_range.parameters.KRM,
             ListSpinGroup=spin_groups,
