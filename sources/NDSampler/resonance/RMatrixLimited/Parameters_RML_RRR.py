@@ -407,10 +407,7 @@ class RMatrixLimited:
             force_reduced = False
         else:
             force_reduced = True
-            
-        # Temp Pierre 28/05/2025
-        force_reduced = False    
-
+        
         all_pairs = []
         for i in range(mf2_range.parameters.particle_pairs.NPP):
             pp = ParticlePair(

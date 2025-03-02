@@ -209,11 +209,6 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         
         # Now, compute the covariance matrix
         std_devs = self.rml_data.get_non_none_std_devs()
-        # for spingroup in mf32_range.parameters.uncertainties.spin_groups.to_list():
-        #     for iER, DER in enumerate(spingroup.parameters.DER[:]):
-        #         std_devs.append(DER)
-        #         for iCH in range(spingroup.NCH):
-        #             std_devs.append(spingroup.parameters.DGAM[iER][iCH])
 
         covariance_matrix = np.outer(std_devs, std_devs) * correlation_matrix
         
