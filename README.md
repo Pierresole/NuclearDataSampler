@@ -56,9 +56,9 @@ This will let you edit the code locally and directly test your changes without r
 
 By construction, this approach works at the evaluated nuclear data level, avoiding additional data-format conversions or embedded nuclear reaction model assumptions. This makes it simple to compare with or feed into other downstream codes.
 
-> **Note**: A mean vector and a covariance matrix uniquely define a (multivariate) Gaussian distribution. By specifying only these two ingredients, we are implicitly stating that uncertainties follow a normal distribution in parameter space. Any more complicated shape would require higher-order moments or parametric expansions, and at least something to verify our hypothesis or some guidance from evaluated distributions.
+> **Note**: A mean vector and a covariance matrix uniquely define a multivariate Gaussian distribution, but other distributions (e.g., elliptically contoured distributions, mixtures gaussians, ...) can share the same mean and covariance while exhibiting different shapes. Therefore, assuming Gaussianity implicitly neglects higher-order moments, which should be justified by either empirical data or theoretical arguments.
 
-Many researchers in the field of UQ have acknowledged the effectiveness of using of LHS sampling, which we have applied in NDSampler and LEAPRSampler.
+NDSampler is the base class as of now. It will read the ENDF tape, extract data to create subclasses such as Uncertainty_RML_RRR. This latter class is derived from CovarianceBase, which contains the necessary for sampling (scheme, covariance, nominal values, copulas).
 
 ---
 
@@ -99,7 +99,7 @@ What motivated this code is a simple but faithful treatment of resonance paramet
 
 ENDSAM is able to generate random files but was primarily developed to check whether the relative uncertainty of certain parameters is too high, and if so, verify if their covariance matrix is mathematically correct (log-normal transformation). 
 
-The conclusions drawn from ENDSAM results and the discussions it triggered in the community (5) led to **NuclearDataSampler** to avoid backend interpretation. Namely if positive parameters are sampled negatively, any backend patch will not be verifiably correct without access to the statistical evaluated distribution. However, if the patch is "acceptable," it may be applied. Similarly, if the covariance matrix is not positive definite and the problematic eigenvalues are significantly negative, one should not clip them to a positive value.
+The conclusions drawn from ENDSAM results and the discussions it triggered in the community (5) led to **NuclearDataSampler** to avoid backend interpretation by letting it being flexible enough for a user to chose laws or correlation structure in order to further, in a more formal manner, verify those assumptions. 
 
 > **Keep cool and call an evaluator**
  
@@ -130,14 +130,10 @@ $p(\mathbf{x}) = \frac{1}{\sqrt{(2\pi)^n \det(\Sigma)}} \exp\left(-\frac{1}{2} (
 - $\mu \in \mathbb{R}^n$ is the vector of means for the $n$ parameters.
 - $\Sigma \in \mathbb{R}^{n \times n}$ is the covariance matrix describing pairwise correlations between parameters.
 
-By definition, only specifying $\mu$ and $\Sigma$ means that the distribution is **exactly Gaussian**. Any higher-order "shape" information (e.g., skewness, kurtosis, etc.) is zero for a perfect Gaussian. 
-
-If the physical reality demands more complex distributions, we must add more parameters or move beyond the Gaussian assumption. **NuclearDataSampler** is developed to be flexible enough to be used with advanced relationship models like Copulas. Sampling from more complicated dependencies and laws is straightforward in Python, but the first move should come from evaluation codes, which should be able to communicate the parameters' distributions.
-
 ---
 
 ## :five: Contributing :construction_worker:
-Contributions are welcome—whether it’s adding new features, fixing bugs, or improving documentation. 
+Contributions are welcome, whether it’s adding new features, fixing bugs, or improving documentation. 
 
 There is still work to be done to address the six types of uncertainties present in nuclear data files: neutron multiplicities, resonance parameters, multigroup cross sections, angular distributions, energy distributions, and fission spectra.
 
