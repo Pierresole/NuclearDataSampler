@@ -1,38 +1,51 @@
 import h5py
 import numpy as np
 from ENDFtk.tree import Tape
-from .resonance.ResonanceRangeCovariance import ResonanceRangeCovariance
-from .angular.AngularDistributionCovariance import AngularDistributionCovariance
+from .CovarianceBase import CovarianceBase
 import datetime
+from typing import List, Optional
+from dataclasses import dataclass, field
+
+@dataclass
+class SamplerSettings:
+    """Dataclass to store settings for nuclear data sampling."""
+    sampling: str = "Simple"  # Options: 'Simple', 'LHS', 'Sobol', etc.
+    widths_to_reduced: bool = False
+    num_samples: int = 1
+    random_seed: Optional[int] = None
+    mode: str = "stack" # Keep in memory (Stack) all samples or draw n' replace
+    
+    def __post_init__(self):
+        """Validate settings after initialization."""
+        valid_sampling_methods = ["Simple", "LHS", "Sobol"]
+        if self.sampling not in valid_sampling_methods:
+            raise ValueError(f"Sampling method '{self.sampling}' not recognized. "
+                             f"Valid options are: {', '.join(valid_sampling_methods)}")
 
 class NDSampler:
-    def __init__(self, endf_tape, covariance_dict : dict = None, hdf5_filename = None):
+    def __init__(self, endf_tape: Tape, covariance_dict: dict = None, settings: Optional[SamplerSettings] = None, hdf5_filename: Optional[str] = None):
+        
         # Set the HDF5 filename
-        if hdf5_filename is None:
-            # Generate a default filename based on the current timestamp
-            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            self.hdf5_filename = f'covariance_data_{timestamp}.hdf5'
-        else:
-            self.hdf5_filename = hdf5_filename
-
-        # Open the HDF5 file
-        self.hdf5_file = h5py.File(self.hdf5_filename, 'w')
+        self.hdf5_filename = hdf5_filename or f'covariance_data_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.hdf5'
+        self.hdf5_file = h5py.File(self.hdf5_filename, 'w') if hdf5_filename is None else h5py.File(hdf5_filename, 'r')
 
         self.original_tape = endf_tape
-        self.endf_tape = endf_tape
+        
+        # Convert settings dict to SamplerSettings dataclass
+        self.settings = settings or SamplerSettings()
 
-        # If covariance_dict is None, generate it
-        if covariance_dict is None:
-            self.covariance_dict = generate_covariance_dict()
+        if hdf5_filename is None:
+            self.covariance_dict = covariance_dict or generate_covariance_dict(endf_tape)
+            # Initialize covariance objects based on covariance_dict
+            self.covariance_objects: List[CovarianceBase] = []
+            self._initialize_covariance_objects()
         else:
-            self.covariance_dict = covariance_dict
+            self.covariance_dict = covariance_dict or {}
+            self.covariance_objects: List[CovarianceBase] = []
 
-        # Initialize covariance objects based on covariance_dict
-        self.covariance_objects = []
-        self._initialize_covariance_objects()
     
-    def _initialize_covariance_objects(self):
-        mat = self.endf_tape.MAT(self.endf_tape.material_numbers[0])
+    def _initialize_covariance_objects(self):   
+        mat = self.original_tape.MAT(self.original_tape.material_numbers[0])
 
         # Loop over covariance_dict to initialize covariance objects
         for MF, MT_dict in self.covariance_dict.items():
@@ -41,13 +54,19 @@ class NDSampler:
                 for MT in MT_dict:
                     if mf_section.has_MT(MT):
                         if MF == 32:
+                            from .resonance.ResonanceRangeCovariance import ResonanceRangeCovariance
                             covariance_objects = []
-                            ResonanceRangeCovariance.fill_from_resonance_range(self.endf_tape, covariance_objects)
+                            ResonanceRangeCovariance.fill_from_resonance_range(
+                                self.original_tape, 
+                                covariance_objects, 
+                                want_reduced=self.settings.widths_to_reduced
+                            )
                             self.covariance_objects.extend(covariance_objects)
                             self._add_covariance_to_hdf5(covariance_objects, "ResonanceRange")
                         elif MF == 34:
+                            from .angular.AngularDistributionCovariance import AngularDistributionCovariance
                             covariance_objects = []
-                            AngularDistributionCovariance.fill_from_resonance_range(self.endf_tape, covariance_objects)
+                            AngularDistributionCovariance.fill_from_resonance_range(self.original_tape, covariance_objects)
                             self.covariance_objects.extend(covariance_objects)
                             self._add_covariance_to_hdf5(covariance_objects, "AngularDist")
                             pass
@@ -66,104 +85,88 @@ class NDSampler:
             covariance_obj.write_to_hdf5(subgroup)
                             
     @classmethod
-    def get_covariance_dict(cls, endf_tape):
+    def get_covariance_dict(cls, endf_tape: Tape):
         sampler = cls(endf_tape, covariance_dict={}, hdf5_filename='temp.hdf5')
         # Close the temporary HDF5 file
         sampler.hdf5_file.close()
         return sampler.covariance_dict
        
-    def load_and_sample_covariance_objects(self, num_samples: int = 1):
-        """
-        Loads covariance data from the HDF5 file and generates samples.
-        """
+    def sample(self, num_samples: int = 1):
+        # Update the number of samples in settings
+        self.settings.num_samples = num_samples
+        
         with h5py.File(self.hdf5_filename, 'r') as hdf5_file:
-            covariance_objects = []
+            covariance_objects: List[CovarianceBase] = []
             for group_name in hdf5_file:
                 group = hdf5_file[group_name]
                 if group_name == 'ResonanceRange':
+                    from .resonance.ResonanceRangeCovariance import ResonanceRangeCovariance
                     ResonanceRangeCovariance.read_hdf5_group(group, covariance_objects)
                 else:
                     # Handle other covariance types
                     pass
 
-            # Reassign self.rml_data if one of the covariance objects has it:
-            # e.g. something like:
-            # for cov_obj in covariance_objects:
-            #     if hasattr(cov_obj, 'rml_data'):
-            #         self.rml_data = cov_obj.rml_data
             if num_samples == 0:
-                endf_tape = self.original_tape
+                endf_tape: Tape = self.original_tape
                 for covariance_obj in covariance_objects:
                     covariance_obj.update_tape(endf_tape, 0)
                 endf_tape.to_file(f'sampled_tape_random0.endf')
                 return
 
-            for i in range(1, num_samples + 1):
-                print(f"Generating sample {i}...")
-                endf_tape = self.original_tape
+            # Configure random seed if specified
+            if self.settings.random_seed is not None:
+                np.random.seed(self.settings.random_seed)
+                
+            # Import sampling methods as needed
+            if self.settings.sampling == "LHS":
+                try:
+                    from pyDOE3 import lhs
+                except ImportError:
+                    raise ImportError("pyDOE package is required for Latin Hypercube Sampling. "
+                                      "Install it using 'pip install pyDOE'")
+            elif self.settings.sampling == "Sobol":
+                try:
+                    from scipy.stats import qmc
+                except ImportError:
+                    raise ImportError("scipy package is required for Sobol sequence sampling. "
+                                      "Install it using 'pip install scipy'")
+
+            # For LHS and Sobol, sample all parameters at once for all covariance objects
+            if self.settings.sampling in ["LHS", "Sobol"]:
+                print(f"Generating {num_samples} samples using {self.settings.sampling} method...")
                 for covariance_obj in covariance_objects:
-                    covariance_obj.sample_parameters()
-                    covariance_obj.update_tape(endf_tape, i)
+                    # Generate all samples at once
+                    covariance_obj.sample_parameters(
+                        sampling_method=self.settings.sampling, 
+                        mode=self.settings.mode, 
+                        use_copula=True, 
+                        num_samples=num_samples
+                    )
                 
-                # Write the sampled tape to a file
-                endf_tape.to_file(f'sampled_tape_random{i}.endf')
-                
-    def test_sample_covariance_objects(self, num_samples):
-        """
-        Loads covariance data from the HDF5 file and generates samples.
-        """
-        with h5py.File(self.hdf5_filename, 'r') as hdf5_file:
-            covariance_objects = []
-            for group_name in hdf5_file:
-                print(f"found group {group_name}")
-                group = hdf5_file[group_name]
+                # Now create individual tapes for each sample
+                for i in range(1, num_samples + 1):
+                    print(f"Creating tape for sample {i}...")
+                    endf_tape: Tape = self.original_tape
+                    for covariance_obj in covariance_objects:
+                        covariance_obj.update_tape(endf_tape, i)
                     
-                if group_name == 'ResonanceRange':
-                    MyResonanceRange.read_hdf5_group(group, covariance_objects)
-                else:
-                    # Handle other covariance types
-                    pass
-
-            for covariance_obj in covariance_objects:
-                for _ in range(num_samples):
-                    covariance_obj.sample_parameters(mode='stack')
-            
-                original_variances = {}
-                covariance_matrix = np.dot(covariance_obj.L_matrix, covariance_obj.L_matrix.T)
-
-                for idx, item in enumerate(covariance_obj.index_mapping):
-                    key = (item['l_idx'], item['j_idx'], item['e_idx'], item['param_name'].decode('utf-8'))
-                    variance = covariance_matrix[idx, idx]
-                    original_variances[key] = variance
-                
-                samples_dict = covariance_obj.extract_samples()
-                
-                variances = {}
-                relative_variances = {}
-                for key, samples in samples_dict.items():
-                    samples_array = np.array(samples)
-                    variance = np.var(samples_array, ddof=1)  # Sample variance
-                    variances[key] = variance
-
-                    # Original value is the first element
-                    original_value = samples_array[0]
-
-                    # Compute relative variance: variance divided by original_value squared
-                    relative_variance = variance / original_value**2
-                    relative_variances[key] = relative_variance
-            
-                for key in relative_variances:
-                    empirical_relative_variance = relative_variances[key]
-                    original_relative_variance = original_variances.get(key, None)
-                    if original_relative_variance is not None:
-                        print(f"Parameter: {key}")
-                        print(f"Empirical Relative Variance: {empirical_relative_variance}")
-                        print(f"Original Relative Variance: {original_relative_variance}")
-                        print(f"Percent Ratio (Empiric - Origin / Origin): {100 * (empirical_relative_variance - original_relative_variance) / original_relative_variance} %")
-                        print()
-                    else:
-                        print(f"Original relative variance not found for parameter: {key}")
-
+                    # Write the sampled tape to a file
+                    endf_tape.to_file(f'sampled_tape_random{i}.endf')
+            else:
+                # For Simple method, sample one at a time
+                for i in range(1, num_samples + 1):
+                    print(f"Generating sample {i}...")
+                    endf_tape: Tape = self.original_tape
+                    for covariance_obj in covariance_objects:
+                        covariance_obj.sample_parameters(
+                            sampling_method=self.settings.sampling, 
+                            mode=self.settings.mode, 
+                            use_copula=True
+                        )
+                        covariance_obj.update_tape(endf_tape, i)
+                    
+                    # Write the sampled tape to a file
+                    endf_tape.to_file(f'sampled_tape_random{i}.endf')
 
 def generate_covariance_dict(endf_tape):
     """
