@@ -14,12 +14,12 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
     - covariance_matrix: The covariance matrix.
     - L_matrix: The Cholesky decomposition of the covariance matrix.
     """
-    def __init__(self, mf2_resonance_ranges, mf32_resonance_range, NER):
-        # Initialize urre_data
+    def __init__(self, mf2_resonance_ranges, mf32_resonance_range, NER, want_reduced: bool = False):
+        # Initialize rml_data
         self.NER = NER
         self.covariance_matrix = None
         start_time = time.time()
-        self.rml_data = RMatrixLimited.from_endftk(mf2_resonance_ranges, mf32_resonance_range)
+        self.rml_data = RMatrixLimited.from_endftk(mf2_resonance_ranges, mf32_resonance_range, want_reduced)
         print(f"Time for RMatrixLimited.from_endftk: {time.time() - start_time:.4f} seconds")
         
         self.index_mapping = []
@@ -49,26 +49,26 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         instance.set_covariance_data(covariance_data)
         return instance
 
-    def extract_resonance_parameters(self):
-        """
-        Extracts resonance parameters from the tape.
-        """
-        # Parse MF2 MT151
-        mf2mt151 = self.tape.MAT(self.tape.material_numbers[0]).MF(2).MT(151).parse()
-        mf32mt151 = self.tape.MAT(self.tape.material_numbers[0]).MF(32).MT(151).parse()
-        resonance_ranges = mf2mt151.isotopes[0].resonance_ranges.to_list()
-        self.resonance_range = resonance_ranges[self.NER]
-        self.resonance_range32 = resonance_ranges = mf32mt151.isotopes[0].resonance_ranges[self.NER]
+    # def extract_resonance_parameters(self):
+    #     """
+    #     Extracts resonance parameters from the tape.
+    #     """
+    #     # Parse MF2 MT151
+    #     mf2mt151 = self.tape.MAT(self.tape.material_numbers[0]).MF(2).MT(151).parse()
+    #     mf32mt151 = self.tape.MAT(self.tape.material_numbers[0]).MF(32).MT(151).parse()
+    #     resonance_ranges = mf2mt151.isotopes[0].resonance_ranges.to_list()
+    #     self.resonance_range = resonance_ranges[self.NER]
+    #     self.resonance_range32 = resonance_ranges = mf32mt151.isotopes[0].resonance_ranges[self.NER]
 
-        # Extract MPAR and LFW from resonance parameters
-        self.MPAR = self.resonance_range.parameters.MPAR
-        self.LFW = self.resonance_range.parameters.LFW
+    #     # Extract MPAR and LFW from resonance parameters
+    #     self.MPAR = self.resonance_range.parameters.MPAR
+    #     self.LFW = self.resonance_range.parameters.LFW
 
-        # Get parameter names
-        self.param_names = self.get_param_names()
+    #     # Get parameter names
+    #     self.param_names = self.get_param_names()
 
-        # Extract parameters
-        self.extract_parameters()
+    #     # Extract parameters
+    #     self.extract_parameters()
 
     def extract_covariance_data(self):
         """
@@ -84,88 +84,88 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         """
         return "Uncertainty_RML_RRR"
     
-    def set_covariance_data(self, covariance_data):
-        """
-        Sets covariance data from the HDF5 file into the object's attributes.
+    # def set_covariance_data(self, covariance_data):
+    #     """
+    #     Sets covariance data from the HDF5 file into the object's attributes.
 
-        Parameters:
-        - covariance_data: The covariance data dictionary from the HDF5 file.
-        """
-        self.MPAR = covariance_data['MPAR']
-        self.LFW = covariance_data['LFW']
-        self.param_names = covariance_data['param_names']
-        self.L_values = [{'L': L, 'J': J} for L, J in zip(covariance_data['L_values'], covariance_data['J_values'])]
+    #     Parameters:
+    #     - covariance_data: The covariance data dictionary from the HDF5 file.
+    #     """
+    #     self.MPAR = covariance_data['MPAR']
+    #     self.LFW = covariance_data['LFW']
+    #     self.param_names = covariance_data['param_names']
+    #     self.L_values = [{'L': L, 'J': J} for L, J in zip(covariance_data['L_values'], covariance_data['J_values'])]
 
-        # Reconstruct parameters from covariance_data
-        self.parameters = []
-        groups = covariance_data['groups']
-        for idx, group_key in enumerate(groups):
-            group_data = groups[group_key]
-            param_list = []
-            for param_name in self.param_names:
-                param_values = group_data[param_name]
-                param_list.append(param_values)
-            self.parameters.append({
-                'L': self.L_values[idx]['L'],
-                'J': self.L_values[idx]['J'],
-                'parameters': param_list
-            })
+    #     # Reconstruct parameters from covariance_data
+    #     self.parameters = []
+    #     groups = covariance_data['groups']
+    #     for idx, group_key in enumerate(groups):
+    #         group_data = groups[group_key]
+    #         param_list = []
+    #         for param_name in self.param_names:
+    #             param_values = group_data[param_name]
+    #             param_list.append(param_values)
+    #         self.parameters.append({
+    #             'L': self.L_values[idx]['L'],
+    #             'J': self.L_values[idx]['J'],
+    #             'parameters': param_list
+    #         })
 
-        # Set covariance matrix
-        self.covariance_matrix = covariance_data['relative_covariance_matrix']
-        self.num_parameters = self.covariance_matrix.shape[0]
+    #     # Set covariance matrix
+    #     self.covariance_matrix = covariance_data['relative_covariance_matrix']
+    #     self.num_parameters = self.covariance_matrix.shape[0]
 
-    def sample_parameters(self, mode='stack'):
-        """
-        Sample resonance parameters using the computed L matrix.
+    # def sample_parameters(self, mode='stack'):
+    #     """
+    #     Sample resonance parameters using the computed L matrix.
         
-        Args:
-            mode: Either 'stack' (append) or 'replace' (overwrite first sample)
-        """
-        if mode not in ['stack', 'replace']:
-            raise ValueError("Mode must be either 'stack' or 'replace'")
+    #     Args:
+    #         mode: Either 'stack' (append) or 'replace' (overwrite first sample)
+    #     """
+    #     if mode not in ['stack', 'replace']:
+    #         raise ValueError("Mode must be either 'stack' or 'replace'")
 
-        # Generate standard normal random variables
-        random_vector = np.random.normal(size=self.L_matrix.shape[0])
+    #     # Generate standard normal random variables
+    #     random_vector = np.random.normal(size=self.L_matrix.shape[0])
         
-        # Calculate correlated samples
-        nominal_parameters = self.rml_data.get_nominal_parameters()
-        correlated_samples = self.L_matrix @ random_vector
+    #     # Calculate correlated samples
+    #     nominal_parameters = self.rml_data.get_nominal_parameters()
+    #     correlated_samples = self.L_matrix @ random_vector
         
-        # If IFG==0, theoritical values are provided and are positive, so we need to keep the sign
-        if self.rml_data.IFG == 0:
-            # Sign-preserving sampling for IFG=0
-            signs = np.sign(nominal_parameters)
-            # For parameters with zero nominal value, default to positive sign
-            signs[signs == 0] = 1
+    #     # If IFG==0, theoritical values are provided and are positive, so we need to keep the sign
+    #     if self.rml_data.IFG == 0:
+    #         # Sign-preserving sampling for IFG=0
+    #         signs = np.sign(nominal_parameters)
+    #         # For parameters with zero nominal value, default to positive sign
+    #         signs[signs == 0] = 1
             
-            # Compute absolute values of the perturbed values, then apply the original signs
-            perturbed_values = nominal_parameters + correlated_samples
-            sampled_values = signs * np.abs(perturbed_values)
-        else:  # IFG == 1
-            # Standard Gaussian sampling for IFG=1
-            sampled_values = nominal_parameters + correlated_samples
+    #         # Compute absolute values of the perturbed values, then apply the original signs
+    #         perturbed_values = nominal_parameters + correlated_samples
+    #         sampled_values = signs * np.abs(perturbed_values)
+    #     else:  # IFG == 1
+    #         # Standard Gaussian sampling for IFG=1
+    #         sampled_values = nominal_parameters + correlated_samples
             
-        # What about E : I don't know if the dummy resonance must keep a negative energy
+    #     # What about E : I don't know if the dummy resonance must keep a negative energy
         
-        # Map the sampled values back to the data structure using index_mapping
-        for sample_idx, (spin_group_idx, resonance_idx, param_idx) in enumerate(self.index_mapping):
-            spin_group = self.rml_data.ListSpinGroup[spin_group_idx]
-            resonance = spin_group.ResonanceParameters[resonance_idx]
+    #     # Map the sampled values back to the data structure using index_mapping
+    #     for sample_idx, (spin_group_idx, resonance_idx, param_idx) in enumerate(self.index_mapping):
+    #         spin_group = self.rml_data.ListSpinGroup[spin_group_idx]
+    #         resonance = spin_group.ResonanceParameters[resonance_idx]
             
-            # Determine which parameter list to modify (ER or GAM)
-            if param_idx == 0:  # ER parameter
-                param_list = resonance.ER
-                sampled_value = sampled_values[sample_idx]
-            else:  # GAM parameter
-                param_list = resonance.GAM[param_idx - 1]
-                sampled_value = sampled_values[sample_idx]
+    #         # Determine which parameter list to modify (ER or GAM)
+    #         if param_idx == 0:  # ER parameter
+    #             param_list = resonance.ER
+    #             sampled_value = sampled_values[sample_idx]
+    #         else:  # GAM parameter
+    #             param_list = resonance.GAM[param_idx - 1]
+    #             sampled_value = sampled_values[sample_idx]
 
-            # Update the parameter list according to the specified mode
-            if mode == 'stack' or len(param_list) == 1:
-                param_list.append(sampled_value)
-            elif mode == 'replace':
-                param_list[1] = sampled_value
+    #         # Update the parameter list according to the specified mode
+    #         if mode == 'stack' or len(param_list) == 1:
+    #             param_list.append(sampled_value)
+    #         elif mode == 'replace':
+    #             param_list[1] = sampled_value
 
     def extract_covariance_matrix(self, mf32_range):
         """
@@ -186,6 +186,12 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
     def extract_covariance_matrix_LCOMP2(self, mf32_range, to_reduced: bool = True):
         """
         Reconstructs the covariance matrix from standard deviations and correlation coefficients when LCOMP == 2.
+        
+        Parameters:
+        -----------
+        mf32_range : The MF32 resonance range
+        to_reduced : bool, optional
+            If True, converts widths to reduced form.
         """
         cm = mf32_range.parameters.correlation_matrix
         NNN = cm.NNN  # Order of the correlation matrix
@@ -212,11 +218,13 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
 
         covariance_matrix = np.outer(std_devs, std_devs) * correlation_matrix
         
-        # Convert to reduced covariance matrix
+        # Convert to reduced covariance matrix if requested
         if to_reduced:
             covariance_matrix = self.rml_data.extract_covariance_matrix_LCOMP2(covariance_matrix)
         
-        self.covariance_matrix = covariance_matrix
+        # Set the covariance matrix as an attribute of CovarianceBase
+        # This ensures we're using the one from the parent class
+        super().__setattr__('covariance_matrix', covariance_matrix)
 
     def construct_mean_vector(self):
         """
@@ -278,18 +286,6 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         # Update mean vector
         self.mean_vector = np.delete(self.mean_vector, zero_variance_indices)
 
-    def compute_L_matrix(self):
-        """
-        Computes the Cholesky decomposition (L matrix) of the covariance matrix.
-        """
-        try:
-            self.L_matrix = np.linalg.cholesky(self.covariance_matrix)
-        except np.linalg.LinAlgError:
-            # Handle non-positive definite covariance matrix
-            eigenvalues, eigenvectors = np.linalg.eigh(self.covariance_matrix)
-            eigenvalues[eigenvalues < 0] = 0
-            self.L_matrix = eigenvectors @ np.diag(np.sqrt(eigenvalues))
-
     def update_tape(self, tape, sample_index=1, sample_name=""):
         """
         Updates the tape with the sampled parameters.
@@ -345,8 +341,66 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         # Create an instance and set attributes
         instance = cls.__new__(cls)
         instance.NER = NER
-        instance.L_matrix = L_matrix
+        
+        # Set L_matrix on the parent CovarianceBase class
+        super(cls, instance).__setattr__('L_matrix', L_matrix)
+        # Set is_cholesky to False as default, since we don't know if it was a Cholesky decomposition
+        # super(cls, instance).__setattr__('is_cholesky', hdf5_group.attrs.get('is_cholesky', False))
+        
+        # Set attributes specific to this class
         instance.rml_data = rml_data
         instance.index_mapping = index_mapping
 
         return instance
+
+    def _apply_samples(self, samples, mode="stack"):
+        """
+        Apply generated samples to the RML resonance parameters.
+        
+        Parameters:
+        -----------
+        samples : numpy.ndarray
+            The samples generated by sample_parameters
+        mode : str
+            How to apply samples:
+            - 'stack': Append new samples
+            - 'replace': Replace existing samples
+        """
+        if mode not in ['stack', 'replace']:
+            raise ValueError("Mode must be either 'stack' or 'replace'")
+            
+        # Calculate nominal parameters
+        nominal_parameters = self.rml_data.get_nominal_parameters()
+        
+        # Apply specific treatments based on IFG flag
+        if self.rml_data.IFG == 0:
+            # Sign-preserving sampling for IFG=0
+            signs = np.sign(nominal_parameters)
+            # For parameters with zero nominal value, default to positive sign
+            signs[signs == 0] = 1
+            
+            # Compute absolute values of the perturbed values, then apply the original signs
+            perturbed_values = nominal_parameters + samples
+            sampled_values = signs * np.abs(perturbed_values)
+        else:  # IFG == 1
+            # Standard Gaussian sampling for IFG=1
+            sampled_values = nominal_parameters + samples
+        
+        # Map the sampled values back to the data structure using index_mapping
+        for sample_idx, (spin_group_idx, resonance_idx, param_idx) in enumerate(self.index_mapping):
+            spin_group = self.rml_data.ListSpinGroup[spin_group_idx]
+            resonance = spin_group.ResonanceParameters[resonance_idx]
+            
+            # Determine which parameter list to modify (ER or GAM)
+            if param_idx == 0:  # ER parameter
+                param_list = resonance.ER
+                sampled_value = sampled_values[sample_idx]
+            else:  # GAM parameter
+                param_list = resonance.GAM[param_idx - 1]
+                sampled_value = sampled_values[sample_idx]
+
+            # Update the parameter list according to the specified mode
+            if mode == 'stack' or len(param_list) == 1:
+                param_list.append(sampled_value)
+            elif mode == 'replace' and len(param_list) > 1:
+                param_list[1] = sampled_value

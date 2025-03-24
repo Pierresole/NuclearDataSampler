@@ -144,26 +144,26 @@ class Channel:
         return cls(**{attr: hdf5_group.attrs[attr] 
                      for attr in ['ppi', 'l', 's', 'b', 'apt', 'ape']})
 
-    def PenetrationFactor(self, energy_lab: float, particlePair: ParticlePair) -> float:
-        """Compute the channel penetration factor based on the orbital momentum l"""
-        import math
+    # def PenetrationFactor(self, energy_lab: float, particlePair: ParticlePair) -> float:
+    #     """Compute the channel penetration factor based on the orbital momentum l"""
+    #     import math
         
-        rho2 = abs(particlePair.k2(energy_lab)) * (self.apt ** 2)
+    #     rho2 = abs(particlePair.k2(energy_lab)) * (self.apt ** 2)
         
-        # if rho2 < 0.0:
-        #     return 0.0
+    #     # if rho2 < 0.0:
+    #     #     return 0.0
         
-        rho = math.sqrt(rho2)
-        if self.l == 0:
-            return rho
-        elif self.l == 1:
-            return rho**3 / (1.0 + rho2)
-        elif self.l == 2:
-            return rho**5 / (9.0 + 3.0*rho2 + rho2**2)
-        elif self.l == 3:
-            return rho**7 / (225.0 + 45.0*rho2 + 6.0*rho2**2 + rho2**3)
-        else:
-            raise ValueError("PenetrationFactor only implemented for l=0,1,2,3.")
+    #     rho = math.sqrt(rho2)
+    #     if self.l == 0:
+    #         return rho
+    #     elif self.l == 1:
+    #         return rho**3 / (1.0 + rho2)
+    #     elif self.l == 2:
+    #         return rho**5 / (9.0 + 3.0*rho2 + rho2**2)
+    #     elif self.l == 3:
+    #         return rho**7 / (225.0 + 45.0*rho2 + 6.0*rho2**2 + rho2**3)
+    #     else:
+    #         raise ValueError("PenetrationFactor only implemented for l=0,1,2,3.")
 
 
 
@@ -239,7 +239,7 @@ class SpinGroup:
         return reduced_width, uncertainty
 
     @classmethod
-    def from_endftk(cls, spingroup2: ENDFtk.MF2.MT151.SpinGroup, spingroup32 = None, force_reduced: bool = False,
+    def from_endftk(cls, spingroup2: ENDFtk.MF2.MT151.SpinGroup, spingroup32 = None, want_reduced: bool = False,
                     entrance_pair: Optional[ParticlePair] = None, all_pairs: Optional[List[ParticlePair]] = None):
         """
         Create SpinGroup from ENDFtk objects with optional reduced width conversion.
@@ -250,10 +250,11 @@ class SpinGroup:
             parity=spingroup2.channels.PJ,
             kbk=spingroup2.channels.KBK,
             kps=spingroup2.channels.KPS,
-            channels=[Channel.from_endftk(spingroup2.channels, i) for i in range(spingroup2.NCH)], all_pairs=all_pairs if all_pairs else []
+            channels=[Channel.from_endftk(spingroup2.channels, i) for i in range(spingroup2.NCH)], 
+            all_pairs=all_pairs if all_pairs else []
         )
 
-        if force_reduced and entrance_pair is not None:
+        if want_reduced and entrance_pair is not None:
             resonances = []
             for i in range(spingroup2.parameters.NRS):
                 energy = spingroup2.parameters.ER[i]
@@ -397,16 +398,14 @@ class RMatrixLimited:
     ListSpinGroup: List[SpinGroup] = field(default_factory=list)
     
     @classmethod
-    def from_endftk(cls, mf2_range: ENDFtk.MF2.MT151.ResonanceRange, mf32_range: ENDFtk.MF32.MT151.ResonanceRange):
+    def from_endftk(cls, mf2_range: ENDFtk.MF2.MT151.ResonanceRange, mf32_range: ENDFtk.MF32.MT151.ResonanceRange, want_reduced: bool = False):
         """
         Creates an instance of RMatrixLimited from an ENDFtk ResonanceRange object,
         calling from_endftk in cascade for ParticlePair and SpinGroup.
         """
-        # If IFG is 1, the MF2 and MF32 data are already reduced
-        if mf2_range.parameters.IFG == 1:
-            force_reduced = False
-        else:
-            force_reduced = True
+        # Determine if reduction is needed
+        already_reduced = mf2_range.parameters.IFG == 1
+        to_reduced = want_reduced and not already_reduced
         
         all_pairs = []
         for i in range(mf2_range.parameters.particle_pairs.NPP):
@@ -433,7 +432,7 @@ class RMatrixLimited:
             SpinGroup.from_endftk(
                 sping_group_mf2,
                 mf32_range.parameters.uncertainties.spin_groups.to_list()[isg],
-                force_reduced,
+                to_reduced,
                 EntrancePair,
                 all_pairs
             )
@@ -441,7 +440,7 @@ class RMatrixLimited:
         ]
 
         return cls(
-            IFG=0 if force_reduced == False else 1,  # IFG is 0 if not force reduced, otherwise 1
+            IFG=1 if to_reduced else 0,  # IFG is 1 if force reduced, otherwise 0
             KRL=mf2_range.parameters.KRL,
             KRM=mf2_range.parameters.KRM,
             ListSpinGroup=spin_groups,
