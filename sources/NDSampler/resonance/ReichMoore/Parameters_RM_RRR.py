@@ -156,20 +156,29 @@ class LGroup:
     resonances: List[ResonanceParameter] = field(default_factory=list)
     
     @classmethod
-    def from_endftk(cls, mf2_lvalue: ENDFtk.MF2.MT151.ReichMooreLValue, scattering_radius_uncertainty: Optional[float] = None, mf32_range: Optional[ENDFtk.MF32.MT151.ResonanceRange] = None, diag_uncertainties=None):
+    def from_endftk(cls, mf2_lvalue: ENDFtk.MF2.MT151.ReichMooreLValue, scattering_radius_uncertainty: Optional[float] = None, mf32_range: Optional[ENDFtk.MF32.MT151.ResonanceRange] = None):
         
         # Create a mapping from MF2 resonance energies to MF32 indices
         mf32_indices = {}
         mf32_energies = []
         MPAR = 0
+        diag = None
         
-        if diag_uncertainties is not None:
-            MPAR = diag_uncertainties['MPAR']
-            mf32_energies = diag_uncertainties['ER']
-        elif mf32_range is not None and hasattr(mf32_range.parameters, 'short_range_blocks') and len(mf32_range.parameters.short_range_blocks) > 0:
+        # Extract diagonal uncertainties directly from MF32 if available
+        if mf32_range is not None and mf32_range.parameters.LCOMP == 1 and hasattr(mf32_range.parameters, 'short_range_blocks') and len(mf32_range.parameters.short_range_blocks) > 0:
             block = mf32_range.parameters.short_range_blocks[0]
             MPAR = block.MPAR
             mf32_energies = block.ER[:]
+            
+            # Extract diagonal elements from covariance matrix
+            covariance_order = block.NPARB
+            cm = np.array(block.covariance_matrix)
+            cov_matrix = np.zeros((covariance_order, covariance_order))
+            triu_indices = np.triu_indices(covariance_order)
+            cov_matrix[triu_indices] = cm
+            
+            # Get standard deviations
+            diag = np.sqrt(np.diag(cov_matrix))
             
         # For each MF2 resonance energy, find the matching MF32 index
         for mf2_idx, mf2_er in enumerate(mf2_lvalue.ER):
@@ -178,7 +187,7 @@ class LGroup:
                 if abs(mf2_er - mf32_er) < 1e-6:  # Using a small tolerance for floating-point comparison
                     mf32_indices[mf2_idx] = mf32_idx
                     break
-        print(diag_uncertainties['diag'])
+
         resonances = []
         for iResonance in range(mf2_lvalue.NRS):
             # Get MF32 index if available
@@ -188,8 +197,7 @@ class LGroup:
             der, dgn, dgg, dgfa, dgfb = None, None, None, None, None
             
             # Set uncertainties based on MPAR value and diagonal elements
-            if mf32_idx is not None and diag_uncertainties is not None:
-                diag = diag_uncertainties['diag']
+            if mf32_idx is not None and diag is not None:
                 base_idx = mf32_idx * MPAR
                 
                 # Get uncertainties based on MPAR value
@@ -311,7 +319,7 @@ class ReichMooreData:
     
         
     @classmethod
-    def from_endftk(cls, mf2_range: ENDFtk.MF2.MT151.ResonanceRange, mf32_range: ENDFtk.MF32.MT151.ResonanceRange, diag_uncertainties=None):
+    def from_endftk(cls, mf2_range: ENDFtk.MF2.MT151.ResonanceRange, mf32_range: ENDFtk.MF32.MT151.ResonanceRange):
         """
         Creates an instance of ReichMooreData from an ENDFtk ResonanceRange object,
         calling from_endftk in cascade for ParticlePair and SpinGroup.
@@ -328,8 +336,7 @@ class ReichMooreData:
             LGroup.from_endftk(
                 mf2_lvalue=l_group_mf2,
                 scattering_radius_uncertainty=vDAPL[ilg] if mf32_range.parameters.ISR != 0 else None,
-                mf32_range=mf32_range.parameters.uncertainties.parameters.l_values.to_list()[ilg] if mf32_range.parameters.LCOMP == 2 else None,
-                diag_uncertainties=diag_uncertainties
+                mf32_range=mf32_range  # Pass the complete mf32_range
             )
             for ilg, l_group_mf2 in enumerate(mf2_range.parameters.l_values.to_list())
         ]
@@ -337,7 +344,7 @@ class ReichMooreData:
         return cls(
             SPI=mf2_range.parameters.SPI,
             AP=[mf2_range.parameters.AP],  # Store as list with initial value
-            DAP=mf32_range.parameters.DAP.DAP,
+            DAP=mf32_range.parameters.DAP.DAP if mf32_range.parameters.ISR != 0 else None,
             LAD=mf2_range.parameters.LAD,
             LGroups=L_groups,
             NLSC=mf2_range.parameters.NLSC
