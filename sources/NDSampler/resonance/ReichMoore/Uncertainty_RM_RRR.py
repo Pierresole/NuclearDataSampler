@@ -9,9 +9,6 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
     def __init__(self, mf2_resonance_ranges, mf32_resonance_range, NER):
         # Initialize base attributes
         self.NER = NER
-        
-        # Extract covariance matrix only once at initialization
-        diag_uncertainties = None
         cov_matrix = None
         
         if mf32_resonance_range.parameters.LCOMP == 1:
@@ -34,12 +31,6 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                 
                 # Make it symmetric
                 cov_matrix = cov_matrix + cov_matrix.T - np.diag(np.diag(cov_matrix))
-                # Extract diagonal (standard deviations)
-                diag_uncertainties = {
-                    'diag': np.sqrt(np.diag(cov_matrix)),
-                    'MPAR': MPAR,
-                    'ER': covariance_data.ER
-                }
                 print(f"Time for extracting covariance matrix: {time.time() - start_time:.4f} seconds")
         else:
             raise ValueError(f"Unsupported LCOMP value: {mf32_resonance_range.parameters.LCOMP}")
@@ -49,7 +40,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         
         # Initialize data model with uncertainty information
         start_time = time.time()
-        self.rm_data = ReichMooreData.from_endftk(mf2_resonance_ranges, mf32_resonance_range, diag_uncertainties)
+        self.rm_data = ReichMooreData.from_endftk(mf2_resonance_ranges, mf32_resonance_range)
         print(f"Time for ReichMooreData.from_endftk: {time.time() - start_time:.4f} seconds")
         
         # Remove zero variance parameters from the covariance matrix
@@ -162,22 +153,21 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             perturbed_ap_values = []
             
             for sample_batch_idx, z_ap in enumerate(z_ap_values):
-                # Calculate sampled value for AP
-                # For positive parameters, use truncated normal distribution
-                # Define lower bound for truncated normal (prevent negative or zero values)
-                a = -1.0 / self.rm_data.DAP if self.rm_data.DAP > 0 else -np.inf
-                
-                # For truncated normal, we use the percentage point function (ppf)
-                # with uniform random values between 0 and 1
+                # If using copula, we already have uniform values from norm.cdf(correlated_z)
                 if use_copula:
-                    # If using copula, we already have uniform values from norm.cdf(correlated_z)
-                    u_ap = sample_list[sample_batch_idx][0]  # Use the first uniform value from samples
-                    # Map from (0,1) to truncated normal using the inverse CDF (ppf)
-                    z_ap = truncnorm.ppf(u_ap, a, np.inf, loc=0, scale=1)
+                    # Get uniform value from samples
+                    u_ap = sample_list[sample_batch_idx][0]
+                    
+                    # Ensure the uniform value is in a safe range for ppf transformation
+                    # Use a more conservative range to avoid numerical issues
+                    u_ap = np.clip(u_ap, 0.001, 0.999)
+                    
+                    z_ap = norm.ppf(u_ap)
                 
-                sampled_ap = nominal_ap * (1.0 + z_ap * self.rm_data.DAP)
+                # Use absolute uncertainty instead of relative
+                sampled_ap = nominal_ap + z_ap * self.rm_data.DAP
                 
-                # Ensure positive value
+                # Ensure positive value for physical parameters
                 sampled_ap = max(sampled_ap, 1e-10)
                 
                 # Store for potential reuse with APL
@@ -208,21 +198,10 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                     nominal_apl = l_group.APL[0]
                     
                     for sample_batch_idx, (z_ap, _) in enumerate(perturbed_ap_values):
-                        # Scale the relative perturbation by the ratio of uncertainties
-                        # This ensures consistent relative perturbations
-                        relative_uncertainty_ratio = l_group.DAPL / self.rm_data.DAP
                         z_apl = z_ap
                         
-                        # Adjust the sampling bounds for truncated normal if needed
-                        a = -1.0 / l_group.DAPL if l_group.DAPL > 0 else -np.inf
-                        
-                        # For truncated normal, we may need to re-sample if the z-value is outside valid range
-                        if z_apl < a:
-                            # Resample within valid range if common z-value would make APL negative
-                            z_apl = truncnorm.rvs(a, np.inf, loc=0, scale=1)
-                        
-                        # Calculate sampled value for APL using same relative perturbation as AP
-                        sampled_apl = nominal_apl * (1.0 + z_apl * l_group.DAPL)
+                        # FIXED: Apply absolute uncertainty instead of relative
+                        sampled_apl = nominal_apl + z_apl * l_group.DAPL
                         
                         # Ensure positive value
                         sampled_apl = max(sampled_apl, 1e-10)
@@ -260,18 +239,18 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                     nominal_apl = l_group.APL[0]
                     
                     for sample_batch_idx, z_apl in enumerate(z_apl_values):
-                        # Define lower bound for truncated normal (prevent negative or zero values)
-                        a = -1.0 / l_group.DAPL if l_group.DAPL > 0 else -np.inf
-                        
                         # For truncated normal, use the percentage point function (ppf)
                         if use_copula:
                             # If using copula, we already have uniform values from norm.cdf(correlated_z)
                             u_apl = sample_list[sample_batch_idx][l_group_idx + 1]  # Use the next uniform value
-                            # Map from (0,1) to truncated normal using the inverse CDF (ppf)
-                            z_apl = truncnorm.ppf(u_apl, a, np.inf, loc=0, scale=1)
+                            
+                            # Ensure the uniform value is in a safe range for ppf transformation
+                            u_apl = np.clip(u_apl, 0.001, 0.999)
+                            
+                            z_apl = norm.ppf(u_apl)
                         
-                        # Calculate sampled value for APL
-                        sampled_apl = nominal_apl * (1.0 + z_apl * l_group.DAPL)
+                        # FIXED: Apply absolute uncertainty instead of relative
+                        sampled_apl = nominal_apl + z_apl * l_group.DAPL
                         
                         # Ensure positive value
                         sampled_apl = max(sampled_apl, 1e-10)
@@ -292,7 +271,8 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                             # Add the new sample
                             l_group.APL.append(sampled_apl)
 
-    def _apply_samples(self, samples, mode="stack", use_copula=False, batch_size=1, sampling_method="Simple"):
+    def _apply_samples(self, samples, mode="stack", use_copula=False, batch_size=1, 
+                    sampling_method="Simple", debug=False):
         """
         Apply generated samples to the resonance parameters with uncertainties.
         
@@ -310,6 +290,8 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             Number of samples in the batch (1 for Simple method, >1 for LHS/Sobol)
         sampling_method : str
             The sampling method used ('Simple', 'LHS', or 'Sobol')
+        debug : bool
+            If True, print and save the transformed parameter samples
         """
         # Handle single sample vs batch sample format
         if batch_size == 1:
@@ -322,6 +304,37 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             operation_mode = 'stack'
         
         from scipy.stats import norm, truncnorm
+        
+        # For debug mode, we'll collect transformed samples
+        if debug:
+            n_params = samples.shape[1] if batch_size > 1 else len(samples)
+            transformed_samples = np.zeros((batch_size, n_params))
+            param_names = []
+            param_indices = []
+            
+            # Diagnose uniform values coming from CovarianceBase
+            # if use_copula:
+            #     # Count extreme values
+            #     extreme_count = 0
+            #     exact_one_count = 0
+            #     high_values = []
+                
+            #     # Check all samples
+            #     for batch_idx, batch_samples in enumerate(sample_list):
+            #         for param_idx, u_value in enumerate(batch_samples):
+            #             if u_value > 0.999:
+            #                 extreme_count += 1
+            #                 high_values.append(u_value)
+            #             if u_value >= 0.9999:
+            #                 exact_one_count += 1
+                
+            #     total_values = batch_size * (n_params if batch_size > 1 else len(samples[0]))
+            #     print(f"\nDiagnostic for uniform values in copula sampling:")
+            #     print(f"Total uniform values: {total_values}")
+            #     print(f"Values > 0.999: {extreme_count} ({extreme_count/total_values:.2%})")
+            #     print(f"Values >= 0.9999: {exact_one_count} ({exact_one_count/total_values:.2%})")
+            #     if high_values:
+            #         print(f"Sample of high values: {high_values[:10]}")
         
         # Perturb AP and APL radius parameters
         # Set same_perturbation=True if you want identical perturbations for AP and APL
@@ -358,26 +371,59 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                         if sample_index < len(current_samples):
                             # For copula-based samples, transform uniform values to appropriate distribution
                             if use_copula:
+                                # Get the uniform value
                                 u_value = current_samples[sample_index]
+                                
+                                # Ensure the uniform value is in a safe range for ppf transformation
+                                # Use a more conservative range to avoid numerical issues
+                                u_value = np.clip(u_value, 0.001, 0.999)
                                 
                                 if constraint_type == 'positive' and nominal_value > 0:
                                     # For positive parameters, use truncated normal
-                                    a = -1.0 / uncertainty if uncertainty > 0 else -np.inf
-                                    z_value = truncnorm.ppf(u_value, a, np.inf, loc=0, scale=1)
+                                    # Calculate the lower bound in standard units to prevent negative values
+                                    # For absolute uncertainty, the lower bound is -nominal_value/uncertainty
+                                    a = -nominal_value / uncertainty if uncertainty > 0 else -np.inf
+                                    
+                                    # IMPROVED: Handle the case where nominal value is very close to zero
+                                    if a < -10:
+                                        # If lower bound is far away, use regular normal
+                                        z_value = norm.ppf(u_value)
+                                    else:
+                                        # Use truncated normal with safe bounds
+                                        # Limit upper bound to avoid numerical issues
+                                        z_value = truncnorm.ppf(u_value, a, 10.0, loc=0, scale=1)
                                 else:
                                     # For signed parameters, use standard normal
+                                    # Use clipped uniform value to prevent numerical issues
                                     z_value = norm.ppf(u_value)
                                 
-                                # Apply the transformed z-value
-                                sampled_value = nominal_value * (1.0 + z_value * uncertainty)
+                                # Apply absolute uncertainty to the nominal value
+                                sampled_value = nominal_value + z_value * uncertainty
+                                
+                                # Debug print only if specifically requested
+                                # if debug and u_value > 0.99:
+                                #     print(f"Parameter {param_name}_L{l_group_idx}_R{resonance_idx}: nominal={nominal_value:.6g}, "
+                                #           f"u={u_value:.10f}, uncert={uncertainty:.6g}, z={z_value:.6g}, sampled={sampled_value:.6g}")
                             else:
                                 # Standard approach - samples are already z-values
                                 sample = current_samples[sample_index]
-                                sampled_value = nominal_value * (1.0 + sample)
+                                
+                                # Apply absolute uncertainty to the nominal value
+                                sampled_value = nominal_value + sample * uncertainty
                             
                             # Apply constraints if needed
                             if constraint_type == 'positive' and nominal_value > 0:
-                                sampled_value = max(sampled_value, 1e-10)  # Ensure positive with a small threshold
+                                # Ensure positive with a small threshold
+                                # For very small values, use a percentage of the nominal
+                                min_value = max(1e-10, nominal_value * 0.001)
+                                sampled_value = max(sampled_value, min_value)
+                            
+                            # Store transformed sample for debug output
+                            if debug:
+                                transformed_samples[sample_batch_idx, sample_index] = sampled_value
+                                if sample_batch_idx == 0:  # Collect names only once
+                                    param_names.append(f"{param_name}_L{l_group_idx}_R{resonance_idx}")
+                                    param_indices.append(sample_index)
                             
                             # Determine the effective sample index
                             effective_sample_idx = sample_batch_idx + 1  # +1 because index 0 is the nominal value
@@ -408,6 +454,46 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             if sample_index != len(current_samples):
                 print(f"Warning: Not all samples in batch {sample_batch_idx+1} were used. Used {sample_index} out of {len(current_samples)}")
 
+        # Debug output of transformed samples
+        if debug:
+            print(f"\n=== Debug Output for {self.__class__.__name__} (Transformed Samples) ===")
+            print(f"Number of parameters: {n_params}")
+            print(f"Number of samples: {batch_size}")
+            print(f"Sampling method: {sampling_method}")
+            
+            # Print sample matrix
+            print("\nTransformed sample matrix (first 5 samples, first 10 parameters):")
+            display_samples = transformed_samples[:min(5, batch_size), :min(10, n_params)]
+            for i, sample in enumerate(display_samples):
+                print(f"Sample {i+1}: {sample}")
+            
+            # Calculate and print sample correlations
+            if batch_size > 1:
+                print("\nTransformed sample correlation matrix (first 5 parameters):")
+                sample_corr = np.corrcoef(transformed_samples.T)[:min(8, n_params), :min(8, n_params)]
+                for row in sample_corr:
+                    print(" ".join([f"{x:.2f}" for x in row]))
+                
+                # Compare with original correlation matrix
+                if hasattr(self, 'covariance_matrix') and self.covariance_matrix is not None:
+                    # Convert covariance to correlation
+                    std_devs = np.sqrt(np.diag(self.covariance_matrix))
+                    std_dev_matrix = np.outer(std_devs, std_devs)
+                    orig_corr = self.covariance_matrix / std_dev_matrix
+                    
+                    print("\nOriginal correlation matrix (first 5 parameters):")
+                    orig_corr_display = orig_corr[:min(8, n_params), :min(8, n_params)]
+                    for row in orig_corr_display:
+                        print(" ".join([f"{x:.2f}" for x in row]))
+            
+            # Save to CSV with parameter names as headers
+            header = ",".join(param_names[:min(20, n_params)])  # First 20 params for readability
+            np.savetxt(f'transformed_samples_{self.__class__.__name__}.csv', 
+                    transformed_samples[:, :min(20, n_params)], 
+                    delimiter=',', header=header, comments="")
+            print(f"\nTransformed samples saved to transformed_samples_{self.__class__.__name__}.csv")
+            print("=" * 50)
+
     def update_tape(self, tape, sample_index=1, sample_name=""):
         """
         Updates the tape with the sampled parameters.
@@ -418,84 +504,6 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         """
         self._update_resonance_range(tape, updated_parameters=self.rm_data.reconstruct(sample_index))
 
-    @classmethod
-    def from_covariance_data(cls, tape, NER, covariance_data):
-        """
-        Initializes the AveragedBreitWigner object using covariance data.
-
-        Parameters:
-        - tape: The ENDF tape object.
-        - NER: The resonance range index.
-        - covariance_data: The covariance data from the HDF5 file.
-
-        Returns:
-        - An instance of AveragedBreitWigner.
-        """
-        instance = cls(tape, NER)
-        instance.set_covariance_data(covariance_data)
-        return instance
-
-    def set_covariance_data(self, covariance_data):
-        """
-        Sets covariance data from the HDF5 file into the object's attributes.
-
-        Parameters:
-        - covariance_data: The covariance data dictionary from the HDF5 file.
-        """
-        self.MPAR = covariance_data['MPAR']
-        self.LFW = covariance_data['LFW']
-        self.param_names = covariance_data['param_names']
-        self.L_values = [{'L': L, 'J': J} for L, J in zip(covariance_data['L_values'], covariance_data['J_values'])]
-
-        # Reconstruct parameters from covariance_data
-        self.parameters = []
-        groups = covariance_data['groups']
-        for idx, group_key in enumerate(groups):
-            group_data = groups[group_key]
-            param_list = []
-            for param_name in self.param_names:
-                param_values = group_data[param_name]
-                param_list.append(param_values)
-            self.parameters.append({
-                'L': self.L_values[idx]['L'],
-                'J': self.L_values[idx]['J'],
-                'parameters': param_list
-            })
-
-        # Set covariance matrix
-        self.covariance_matrix = covariance_data['relative_covariance_matrix']
-        self.num_parameters = self.covariance_matrix.shape[0]
-
-    # def sample_parameters(self):
-    #     """
-    #     Samples new parameters based on the covariance matrix.
-    #     """
-    #     if self.L_matrix is None:
-    #         # Compute L_matrix if not already computed
-    #         self.compute_L_matrix()
-
-    #     # Generate standard normal random variables
-    #     N = np.random.normal(size=self.L_matrix.shape[0])
-
-    #     # Compute sampled relative deviations
-    #     Y = self.L_matrix @ N  # Y has size (num_parameters,)
-
-    #     # Apply deviations to parameters
-    #     idx_in_Y = 0
-    #     sampled_parameters = []
-
-    #     for group in self.parameters:
-    #         sampled_group = {'L': group['L'], 'J': group['J'], 'sampled_parameters': {}}
-    #         for param_name, mean_values in zip(self.param_names, group['parameters']):
-    #             relative_deviation = Y[idx_in_Y]
-    #             idx_in_Y += 1
-    #             # Apply the deviation uniformly to the parameter array
-    #             sampled_values = mean_values * (1 + relative_deviation)
-    #             sampled_group['sampled_parameters'][param_name] = sampled_values
-    #         sampled_parameters.append(sampled_group)
-
-    #     return sampled_parameters
-    
     def extract_covariance_matrix(self, mf32_range):
         """
         Extracts the covariance matrix using the method from the base class.
@@ -657,11 +665,6 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         # Write L_matrix
         hdf5_group.create_dataset('L_matrix', data=self.L_matrix)
 
-        # Write index_mapping as a compound dataset
-        # dt = np.dtype([('l_group', 'i4'), ('resonance', 'i4'), ('parameter', 'i4')])
-        # index_data = np.array(self.index_mapping, dtype=dt)
-        # hdf5_group.create_dataset('index_mapping', data=index_data)
-
         # Write rml_data
         rml_data_group = hdf5_group.create_group('Parameters')
         self.rm_data.write_to_hdf5(rml_data_group)
@@ -676,11 +679,6 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         # Read L_matrix
         L_matrix = hdf5_group['L_matrix'][()]
 
-        # Read index_mapping
-        # index_data = hdf5_group['index_mapping'][()]
-        # index_mapping = [(int(idx['l_group']), int(idx['resonance']), int(idx['parameter'])) 
-        #                 for idx in index_data]
-
         # Read rml_data
         rm_data_group = hdf5_group['Parameters']
                 
@@ -692,12 +690,8 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         
         # Set L_matrix on the parent CovarianceBase class
         super(cls, instance).__setattr__('L_matrix', L_matrix)
-        # Set is_cholesky to False as default, since we don't know if it was a Cholesky decomposition
-        # super(cls, instance).__setattr__('is_cholesky', hdf5_group.attrs.get('is_cholesky', False))
         
         # Set attributes specific to this class
         instance.rm_data = rm_data
-        # instance._build_index_mapping()
-        # instance.index_mapping = index_mapping
 
         return instance
