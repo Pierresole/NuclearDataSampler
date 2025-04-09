@@ -19,6 +19,7 @@ class CovarianceBase(ABC):
         self.L_matrix = None
         self.is_cholesky = False
         self.sampled_values = None
+        self.L_R = None  # Correlation matrix decomposition for copula sampling
 
     def delete_parameters(self, indices_to_delete):
         """
@@ -108,27 +109,11 @@ class CovarianceBase(ABC):
         # Call the derived class method to write format-specific data
         self.write_additional_data_to_hdf5(hdf5_group)
         
-    # @abstractmethod
-    # def write_additional_data_to_hdf5(self, hdf5_group):
-    #     """
-    #     Abstract method to write format-specific data to HDF5.
-    #     To be implemented by derived classes.
-    #     """
-    #     pass
-
-    # @abstractmethod
-    # def sample_parameters(self):
-    #     pass
-        
-    # @abstractmethod
-    # def print_parameters(self):
-    #     pass
-    
     @abstractmethod
     def update_tape(self):
         pass
 
-    def sample_parameters(self, sampling_method="Simple", mode="stack", use_copula=False, num_samples=1):
+    def sample_parameters(self, sampling_method="Simple", mode="stack", use_copula=False, num_samples=1, debug=False):
         """
         Sample parameters based on the covariance matrix using the specified sampling method.
         
@@ -139,6 +124,7 @@ class CovarianceBase(ABC):
             - 'Simple': Standard Monte Carlo sampling
             - 'LHS': Latin Hypercube Sampling
             - 'Sobol': Sobol sequence sampling
+            - 'Halton': Halton sequence sampling
         mode : str
             How to apply samples to parameters:
             - 'stack': Append new samples (default)
@@ -146,50 +132,77 @@ class CovarianceBase(ABC):
         use_copula : bool
             Whether to use Gaussian copula for respecting marginal distributions
         num_samples : int
-            Number of samples to generate (for LHS and Sobol, all samples are generated at once)
+            Number of samples to generate (all samples are generated at once)
+        debug : bool
+            If True, prints out the matrix of sampled parameters and returns without updating
         """
         if self.L_matrix is None:
             raise ValueError("Decomposed covariance matrix is not initialized")
         
         n_params = self.L_matrix.shape[0]
         
-        # For LHS and Sobol methods, always generate all samples at once
-        batch_size = num_samples if sampling_method in ["LHS", "Sobol"] else 1
+        # Generate all samples at once
+        batch_size = num_samples
         
+        scrambling = True # samples are randomly placed within cells of the grid
+
         # Generate uniform samples based on the chosen method
         if sampling_method == "Simple":
-            # Simple Monte Carlo sampling - one sample at a time
-            u_uniform = np.random.uniform(size=(1, n_params)) if use_copula else None
-            
-            # Standard normal random variables for correlation structure
-            z = np.random.normal(size=n_params)
-            
+            # Simple Monte Carlo sampling - batch of samples
+            if use_copula:
+                # Generate uniform values in range (0,1) but avoid extremes (0 and 1)
+                # Use a safer range away from extremes
+                u_uniform = np.random.uniform(0.001, 0.999, size=(batch_size, n_params))
+                z = None
+            else:
+                z = np.random.normal(size=(batch_size, n_params))
+                u_uniform = None
+                
         elif sampling_method == "LHS":
-            # Latin Hypercube Sampling - generate all samples at once
-            from pyDOE3 import lhs
+            # Latin Hypercube Sampling using scipy.stats.qmc
+            from scipy.stats import qmc
             
             # Generate LHS samples in [0, 1]
-            u_uniform = lhs(n_params, samples=batch_size)
+            sampler = qmc.LatinHypercube(d=n_params, scramble=scrambling)
+            u_uniform_raw = sampler.random(batch_size)
             
-            # If using copula, we'll keep these uniform values
-            # Otherwise, transform to normal distribution directly
-            if not use_copula:
+            # If using copula, scale values to avoid extremes
+            if use_copula:
+                # Rescale to avoid extreme values more aggressively
+                u_uniform = 0.001 + 0.998 * u_uniform_raw
+            else:
                 from scipy.stats import norm
-                z = norm.ppf(u_uniform[0]).flatten() if batch_size == 1 else norm.ppf(u_uniform)
-            else:
-                z = None
-                
+                z = norm.ppf(u_uniform_raw)
+                u_uniform = None      
         elif sampling_method == "Sobol":
-            # Sobol sequence sampling - generate all samples at once
-            from scipy.stats import qmc, norm
+            # Sobol sequence sampling
+            from scipy.stats import qmc
             
-            sampler = qmc.Sobol(d=n_params, scramble=True)
-            u_uniform = sampler.random(batch_size)
+            sampler = qmc.Sobol(d=n_params, scramble=scrambling)
+            u_uniform_raw = sampler.random(batch_size)
             
-            if not use_copula:
-                z = norm.ppf(u_uniform[0]).flatten() if batch_size == 1 else norm.ppf(u_uniform)
+            if use_copula:
+                # Rescale to avoid extreme values more aggressively
+                u_uniform = 0.001 + 0.998 * u_uniform_raw
             else:
-                z = None
+                from scipy.stats import norm
+                z = norm.ppf(u_uniform_raw)
+                u_uniform = None
+                
+        elif sampling_method == "Halton":
+            # Halton sequence sampling
+            from scipy.stats import qmc
+            
+            sampler = qmc.Halton(d=n_params, scramble=scrambling)
+            u_uniform_raw = sampler.random(batch_size)
+            
+            if use_copula:
+                # Rescale to avoid extreme values more aggressively
+                u_uniform = 0.001 + 0.998 * u_uniform_raw
+            else:
+                from scipy.stats import norm
+                z = norm.ppf(u_uniform_raw)
+                u_uniform = None
                 
         else:
             raise ValueError(f"Unknown sampling method: {sampling_method}")
@@ -199,53 +212,93 @@ class CovarianceBase(ABC):
             # Transform uniform marginals to correlated standard normal
             from scipy.stats import norm
             
-            if batch_size == 1:
-                # Single sample case
-                # First convert uniform samples to standard normal
-                z_independent = norm.ppf(u_uniform).flatten()
+            # Transform each uniform sample to independent standard normal
+            z_independent = norm.ppf(u_uniform)
+            
+            # CORRECTED: We need to decompose the correlation matrix, not the covariance matrix
+            # @TODO: we could store R instead of L
+            # Calculate correlation matrix from covariance matrix
+            self.covariance_matrix = self.L_matrix @ self.L_matrix.T
+            if not hasattr(self, 'L_R'):  # Calculate L_R only once and store it
+                std_devs = np.sqrt(np.diag(self.covariance_matrix))
+                # Create correlation matrix
+                corr_matrix = np.zeros_like(self.covariance_matrix)
+                for i in range(n_params):
+                    for j in range(n_params):
+                        if std_devs[i] > 0 and std_devs[j] > 0:
+                            corr_matrix[i, j] = self.covariance_matrix[i, j] / (std_devs[i] * std_devs[j])
+                        else:
+                            # Handle zero standard deviations - set correlation to 0
+                            corr_matrix[i, j] = 0.0 if i != j else 1.0
                 
-                # Apply Cholesky to get correlated standard normal
-                z_correlated = self.L_matrix @ z_independent
+                try:
+                    # Decompose the correlation matrix
+                    self.L_R = np.linalg.cholesky(corr_matrix)
+                except np.linalg.LinAlgError:
+                    # Handle non-positive definite correlation matrix
+                    eigenvalues, eigenvectors = np.linalg.eigh(corr_matrix)
+                    eigenvalues[eigenvalues < 0] = 0
+                    self.L_R = eigenvectors @ np.diag(np.sqrt(eigenvalues))
                 
-                # Convert back to uniform using the standard normal CDF
-                u_correlated = norm.cdf(z_correlated)
-                
-                # This is handled by the _apply_samples method which needs to check constraints
-                samples = u_correlated
-                self.sampled_uniform_values = u_correlated
-            else:
-                # Batch case
-                # Transform each uniform sample to independent standard normal
-                z_independent = norm.ppf(u_uniform)
-                
-                # Apply correlation structure to each sample
-                z_correlated = np.zeros_like(z_independent)
-                for i in range(batch_size):
-                    z_correlated[i] = self.L_matrix @ z_independent[i]
-                
-                # Convert back to uniform using standard normal CDF
-                u_correlated = norm.cdf(z_correlated)
-                
-                samples = u_correlated
-                self.sampled_uniform_values = u_correlated
+                if debug:
+                    print("Correlation matrix decomposition:")
+                    print(f"Using Cholesky: {np.allclose(self.L_R @ self.L_R.T, corr_matrix)}")
+                    if not np.allclose(self.L_R @ self.L_R.T, corr_matrix):
+                        print("Using spectral decomposition instead")
+            
+            # Apply correlation structure to each sample using L_R instead of L_matrix
+            z_correlated = np.zeros_like(z_independent)
+            for i in range(batch_size):
+                # Use L_R (correlation decomposition) instead of L_matrix (covariance decomposition)
+                z_correlated[i] = self.L_R @ z_independent[i]
+            
+            # IMPORTANT FIX: Bound z-values to prevent extreme CDF values
+            # Limit to ±8 standard deviations, which gives CDF values around 1e-15 and 1-1e-15
+            z_correlated = np.clip(z_correlated, -8.0, 8.0)
+            
+            # Convert back to uniform using standard normal CDF
+            # Apply more aggressive clipping to prevent near-1 values
+            u_correlated = norm.cdf(z_correlated)
+            
+            # Apply final rescaling to ensure safe range (0.001, 0.999)
+            # This ensures we don't get values too close to 0 or 1
+            u_correlated = 0.001 + 0.998 * u_correlated
+            
+            # Add diagnostic information for debug mode
+            if debug:
+                extreme_values_count = np.sum(u_correlated > 0.999)
+                if extreme_values_count > 0:
+                    print(f"\nDIAGNOSTIC: Found {extreme_values_count} values > 0.999 after correction")
+                    print(f"Max value: {np.max(u_correlated)}")
+                    print(f"This represents {extreme_values_count/(batch_size*n_params):.2%} of all values")
+                    
+                    # Find parameters with extreme values
+                    param_indices = np.where(np.any(u_correlated > 0.999, axis=0))[0]
+                    if len(param_indices) > 0:
+                        print(f"Parameters with extreme values: {param_indices}")
+                        
+                        # Show max z-values before CDF transformation
+                        max_z_values = np.max(z_correlated, axis=0)[param_indices]
+                        print(f"Max z-values for these parameters: {max_z_values}")
+            
+            samples = u_correlated
+            self.sampled_uniform_values = u_correlated
         else:
             # Standard approach - apply correlation structure directly
-            if batch_size == 1:
-                samples = self.L_matrix @ z
-            else:
-                # For batches, apply correlation to each sample
-                samples = np.zeros((batch_size, n_params))
-                for i in range(batch_size):
-                    samples[i] = self.L_matrix @ z[i]
+            samples = np.zeros((batch_size, n_params))
+            for i in range(batch_size):
+                samples[i] = self.mean_vector + self.L_matrix @ z[i]
         
         self.sampled_values = samples
         
         # Let subclasses handle how these samples are applied to their specific parameters
-        self._apply_samples(samples, mode, use_copula=use_copula, batch_size=batch_size, sampling_method=sampling_method)
+        self._apply_samples(samples, mode, use_copula=use_copula, batch_size=batch_size, 
+                            sampling_method=sampling_method, debug=debug)
         
         return samples
-    
-    def _apply_samples(self, samples, mode="stack", use_copula: bool=False, batch_size: int=1, sampling_method: str="Simple"):
+
+    def _apply_samples(self, samples, mode="stack", use_copula=False, batch_size=1, 
+                  sampling_method="Simple", debug=False):
         """
         Apply generated samples to the model parameters.
         This method should be overridden by subclasses to handle specific parameter structures.
@@ -264,6 +317,8 @@ class CovarianceBase(ABC):
             Number of samples in the batch (1 for Simple method, >1 for LHS/Sobol)
         sampling_method : str
             The sampling method used ('Simple', 'LHS', or 'Sobol')
+        debug : bool
+            If True, print and save the transformed parameter samples
         """
         # Default implementation (for simple cases only)
         # Most subclasses will need to override this with their specific implementation
