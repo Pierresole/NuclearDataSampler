@@ -9,15 +9,16 @@ from dataclasses import dataclass, field
 @dataclass
 class SamplerSettings:
     """Dataclass to store settings for nuclear data sampling."""
-    sampling: str = "Simple"  # Options: 'Simple', 'LHS', 'Sobol', etc.
+    sampling: str = "Simple"  # Options: 'Simple', 'LHS', 'Sobol', 'Halton', etc.
     widths_to_reduced: bool = False
     num_samples: int = 1
     random_seed: Optional[int] = None
     mode: str = "stack" # Keep in memory (Stack) all samples or draw n' replace
+    debug: bool = False  # Debug mode for printing sample matrices without updating tapes
     
     def __post_init__(self):
         """Validate settings after initialization."""
-        valid_sampling_methods = ["Simple", "LHS", "Sobol"]
+        valid_sampling_methods = ["Simple", "LHS", "Sobol", "Halton"]
         if self.sampling not in valid_sampling_methods:
             raise ValueError(f"Sampling method '{self.sampling}' not recognized. "
                              f"Valid options are: {', '.join(valid_sampling_methods)}")
@@ -106,6 +107,7 @@ class NDSampler:
                     # Handle other covariance types
                     pass
 
+            # Essentially to test the parser/writer
             if num_samples == 0:
                 endf_tape: Tape = self.original_tape
                 for covariance_obj in covariance_objects:
@@ -118,55 +120,37 @@ class NDSampler:
                 np.random.seed(self.settings.random_seed)
                 
             # Import sampling methods as needed
-            if self.settings.sampling == "LHS":
-                try:
-                    from pyDOE3 import lhs
-                except ImportError:
-                    raise ImportError("pyDOE package is required for Latin Hypercube Sampling. "
-                                      "Install it using 'pip install pyDOE'")
-            elif self.settings.sampling == "Sobol":
-                try:
-                    from scipy.stats import qmc
-                except ImportError:
-                    raise ImportError("scipy package is required for Sobol sequence sampling. "
-                                      "Install it using 'pip install scipy'")
+            try:
+                from scipy.stats import qmc
+            except ImportError:
+                raise ImportError("scipy.stats.qmc is required for advanced sampling methods. "
+                                  "Install it using 'pip install scipy'")
 
-            # For LHS and Sobol, sample all parameters at once for all covariance objects
-            if self.settings.sampling in ["LHS", "Sobol"]:
-                print(f"Generating {num_samples} samples using {self.settings.sampling} method...")
-                for covariance_obj in covariance_objects:
-                    # Generate all samples at once
-                    covariance_obj.sample_parameters(
-                        sampling_method=self.settings.sampling, 
-                        mode=self.settings.mode, 
-                        use_copula=True, 
-                        num_samples=num_samples
-                    )
+            print(f"Generating {num_samples} samples using {self.settings.sampling} method...")
+            for covariance_obj in covariance_objects:
+                # Generate all samples at once
+                covariance_obj.sample_parameters(
+                    sampling_method=self.settings.sampling, 
+                    mode=self.settings.mode, 
+                    use_copula=True, 
+                    num_samples=num_samples,
+                    debug=self.settings.debug
+                )
+            
+            # Skip tape creation in debug mode
+            if self.settings.debug:
+                print("Debug mode enabled - skipping tape creation")
+                return
                 
-                # Now create individual tapes for each sample
-                for i in range(1, num_samples + 1):
-                    print(f"Creating tape for sample {i}...")
-                    endf_tape: Tape = self.original_tape
-                    for covariance_obj in covariance_objects:
-                        covariance_obj.update_tape(endf_tape, i)
-                    
-                    # Write the sampled tape to a file
-                    endf_tape.to_file(f'sampled_tape_random{i}.endf')
-            else:
-                # For Simple method, sample one at a time
-                for i in range(1, num_samples + 1):
-                    print(f"Generating sample {i}...")
-                    endf_tape: Tape = self.original_tape
-                    for covariance_obj in covariance_objects:
-                        covariance_obj.sample_parameters(
-                            sampling_method=self.settings.sampling, 
-                            mode=self.settings.mode, 
-                            use_copula=True
-                        )
-                        covariance_obj.update_tape(endf_tape, i)
-                    
-                    # Write the sampled tape to a file
-                    endf_tape.to_file(f'sampled_tape_random{i}.endf')
+            # Now create individual tapes for each sample
+            for i in range(1, num_samples + 1):
+                print(f"Creating tape for sample {i}...")
+                endf_tape: Tape = self.original_tape
+                for covariance_obj in covariance_objects:
+                    covariance_obj.update_tape(endf_tape, i)
+                
+                # Write the sampled tape to a file
+                endf_tape.to_file(f'sampled_tape_random{i}.endf')
 
 def generate_covariance_dict(endf_tape):
     """
