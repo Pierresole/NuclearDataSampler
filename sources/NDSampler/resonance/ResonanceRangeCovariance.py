@@ -26,33 +26,79 @@ class ResonanceRangeCovariance(CovarianceBase, ABC):
         self.DAP = None  # Scattering radius uncertainty
     
     @staticmethod
-    def fill_from_resonance_range(endf_tape : Tape, covariance_objects : list, want_reduced: bool = False):
+    def fill_from_resonance_range(endf_tape: Tape, covariance_objects: list, ner_list=None, want_reduced: bool = False):
+        """
+        Fills the covariance_objects list with resonance range covariance objects.
+        
+        Parameters:
+        -----------
+        endf_tape : Tape
+            The ENDF tape object
+        covariance_objects : list
+            List to be filled with covariance objects
+        ner_list : list, optional
+            List of resonance range indices to process. If None, process all ranges.
+        want_reduced : bool, optional
+            Whether to use reduced widths
+        """
         mf2 = endf_tape.MAT(endf_tape.material_numbers[0]).MF(2).MT(151).parse()
         mf32 = endf_tape.MAT(endf_tape.material_numbers[0]).MF(32).MT(151).parse()
         
-        for NER, mf32_resonance_range in enumerate(mf32.isotopes[0].resonance_ranges.to_list()):
-            mf2_resonance_range = mf2.isotopes[0].resonance_ranges[NER]
+        mf2_ranges = mf2.isotopes[0].resonance_ranges.to_list()
+        mf32_ranges = mf32.isotopes[0].resonance_ranges.to_list()
+        
+        # Determine which NER values to process
+        if ner_list is None:
+            # Process all resonance ranges if no specific list is provided
+            indices_to_process = range(len(mf32_ranges))
+        else:
+            # Process only the specified NER values
+            indices_to_process = ner_list
+            
+        # Validate that all requested indices exist
+        if max(indices_to_process, default=-1) >= len(mf32_ranges):
+            raise IndexError(f"NER list contains indices that exceed the number of available resonance ranges: {len(mf32_ranges)}")
+        
+        print(f"Processing {len(indices_to_process)} resonance range(s) with NER values: {list(indices_to_process)}")
+        
+        for NER in indices_to_process:
+            if NER >= len(mf2_ranges) or NER >= len(mf32_ranges):
+                print(f"Warning: Skipping invalid NER={NER}, max MF2={len(mf2_ranges)-1}, max MF32={len(mf32_ranges)-1}")
+                continue
+                
+            mf2_resonance_range = mf2_ranges[NER]
+            mf32_resonance_range = mf32_ranges[NER]
+            
             LRU = mf2_resonance_range.LRU
             LRF = mf2_resonance_range.LRF
+            
+            print(f"Processing NER={NER} with LRU={LRU}, LRF={LRF}")
+            
+            # Create the appropriate covariance object based on LRU and LRF values
             if LRU == 1 and LRF == 2:
-                pass
-                # return MultiLevelBreitWignerCovariance(resonance_range, mf2_resonance_ranges, NER)
+                print(f"Multi-level Breit-Wigner formalism for NER={NER} not yet implemented")
+                # Import and create MLBW covariance object when implemented
+                
             elif LRU == 1 and LRF == 3:
-                pass
+                print(f"Creating Reich-Moore covariance object for NER={NER}")
                 from .ReichMoore.Uncertainty_RM_RRR import Uncertainty_RM_RRR
                 covariance_objects.append(Uncertainty_RM_RRR(mf2_resonance_range, mf32_resonance_range, NER))
-                # return RRRReichMooreUncertainty(mf2_resonance_range, mf32_resonance_range, NER)
+                
             elif LRU == 1 and LRF == 7:
+                print(f"Creating R-Matrix Limited covariance object for NER={NER}")
                 from .RMatrixLimited.Uncertainty_RML_RRR import Uncertainty_RML_RRR
                 covariance_objects.append(Uncertainty_RML_RRR(mf2_resonance_range, mf32_resonance_range, NER, want_reduced))
-                # return RMatrixLimitedCovariance(resonance_range, mf2_resonance_ranges, NER)
-                pass
+                
             elif LRU == 2 and LRF == 2:
+                print(f"Creating Unresolved Breit-Wigner covariance object for NER={NER}")
                 from .BreitWigner.Uncertainty_BW_URR import Uncertainty_BW_URR
                 covariance_objects.append(Uncertainty_BW_URR(mf2_resonance_range, mf32_resonance_range, NER))
-                # return URRBreitWignerUncertainty(mf2_resonance_range, mf32_resonance_range, NER)
+                
             else:
-                raise NotImplementedError(f"Resonance covariance format not supported LRU={LRU}, LRF={LRF}")
+                print(f"Warning: Resonance covariance format not supported for NER={NER} with LRU={LRU}, LRF={LRF}")
+                # No need to raise an exception here, just skip this range
+
+        print(f"Created {len(covariance_objects)} resonance covariance objects")
      
 
     # def sample_parameters(self):

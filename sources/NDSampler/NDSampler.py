@@ -15,7 +15,7 @@ class SamplerSettings:
     mode: str = "stack" # Keep in memory (Stack) all samples or draw n' replace
     debug: bool = False  # Debug mode for printing sample matrices without updating tapes
     
-    # Parmater settings specific to resonances
+    # Parameters settings specific to resonances
     widths_to_reduced: bool = False
     
     def __post_init__(self):

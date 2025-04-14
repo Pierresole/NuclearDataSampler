@@ -9,34 +9,11 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
     def __init__(self, mf2_resonance_ranges, mf32_resonance_range, NER):
         # Initialize base attributes
         self.NER = NER
-        cov_matrix = None
         
-        if mf32_resonance_range.parameters.LCOMP == 1:
-            start_time = time.time()
-            # Extract the covariance block
-            if mf32_resonance_range.parameters.NSRS > 0:
-                covariance_data = mf32_resonance_range.parameters.short_range_blocks[0]
-                covariance_order = covariance_data.NPARB
-                MPAR = covariance_data.MPAR  # Number of parameters per resonance
-                
-                # Get the flattened upper triangular matrix data
-                cm = np.array(covariance_data.covariance_matrix)
-                
-                # Create empty covariance matrix
-                cov_matrix = np.zeros((covariance_order, covariance_order))
-                
-                # Use numpy indexing for direct assignment to upper triangle
-                triu_indices = np.triu_indices(covariance_order)
-                cov_matrix[triu_indices] = cm
-                
-                # Make it symmetric
-                cov_matrix = cov_matrix + cov_matrix.T - np.diag(np.diag(cov_matrix))
-                print(f"Time for extracting covariance matrix: {time.time() - start_time:.4f} seconds")
-        else:
-            raise ValueError(f"Unsupported LCOMP value: {mf32_resonance_range.parameters.LCOMP}")
-        
-        # Set the covariance matrix as an attribute of CovarianceBase
-        super().__setattr__('covariance_matrix', cov_matrix)
+        start_time = time.time()
+        self.extract_covariance_matrix(mf32_resonance_range) 
+        print(f"Time for extracting covariance matrix: {time.time() - start_time:.4f} seconds")
+
         
         # Initialize data model with uncertainty information
         start_time = time.time()
@@ -110,7 +87,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             If True, applies identical perturbations to AP and all APL values
             assuming they represent the same physical radius parameter. ENDF manual not clear on that.
         """
-        from scipy.stats import norm, qmc, truncnorm
+        from scipy.stats import norm, truncnorm, qmc
         
         # Number of samples to generate
         num_samples = len(sample_list)
@@ -121,11 +98,15 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             if sampling_method == "Simple":
                 common_z_values = np.random.normal(size=num_samples)
             elif sampling_method == "LHS":
-                from pyDOE3 import lhs
-                common_u_values = lhs(1, samples=num_samples).flatten()
+                sampler = qmc.LatinHypercube(d=1, scramble=True)
+                common_u_values = sampler.random(num_samples).flatten()
                 common_z_values = norm.ppf(common_u_values)
             elif sampling_method == "Sobol":
                 sampler = qmc.Sobol(d=1, scramble=True)
+                common_u_values = sampler.random(num_samples).flatten()
+                common_z_values = norm.ppf(common_u_values)
+            elif sampling_method == "Halton":
+                sampler = qmc.Halton(d=1, scramble=True)
                 common_u_values = sampler.random(num_samples).flatten()
                 common_z_values = norm.ppf(common_u_values)
         
@@ -138,11 +119,15 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                 if sampling_method == "Simple":
                     z_ap_values = np.random.normal(size=num_samples)
                 elif sampling_method == "LHS":
-                    from pyDOE3 import lhs
-                    u_ap_values = lhs(1, samples=num_samples).flatten()
+                    sampler = qmc.LatinHypercube(d=1, scramble=True)
+                    u_ap_values = sampler.random(num_samples).flatten()
                     z_ap_values = norm.ppf(u_ap_values)
                 elif sampling_method == "Sobol":
                     sampler = qmc.Sobol(d=1, scramble=True)
+                    u_ap_values = sampler.random(num_samples).flatten()
+                    z_ap_values = norm.ppf(u_ap_values)
+                elif sampling_method == "Halton":
+                    sampler = qmc.Halton(d=1, scramble=True)
                     u_ap_values = sampler.random(num_samples).flatten()
                     z_ap_values = norm.ppf(u_ap_values)
             
@@ -227,11 +212,15 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                         if sampling_method == "Simple":
                             z_apl_values = np.random.normal(size=num_samples)
                         elif sampling_method == "LHS":
-                            from pyDOE3 import lhs
-                            u_apl_values = lhs(1, samples=num_samples).flatten()
+                            sampler = qmc.LatinHypercube(d=1, scramble=True)
+                            u_apl_values = sampler.random(num_samples).flatten()
                             z_apl_values = norm.ppf(u_apl_values)
                         elif sampling_method == "Sobol":
                             sampler = qmc.Sobol(d=1, scramble=True)
+                            u_apl_values = sampler.random(num_samples).flatten()
+                            z_apl_values = norm.ppf(u_apl_values)
+                        elif sampling_method == "Halton":
+                            sampler = qmc.Halton(d=1, scramble=True)
                             u_apl_values = sampler.random(num_samples).flatten()
                             z_apl_values = norm.ppf(u_apl_values)
                     
@@ -272,7 +261,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                             l_group.APL.append(sampled_apl)
 
     def _apply_samples(self, samples, mode="stack", use_copula=False, batch_size=1, 
-                    sampling_method="Simple", debug=False):
+                    sampling_method="Simple", debug=False, radius_only=False):
         """
         Apply generated samples to the resonance parameters with uncertainties.
         
@@ -292,6 +281,8 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             The sampling method used ('Simple', 'LHS', or 'Sobol')
         debug : bool
             If True, print and save the transformed parameter samples
+        radius_only : bool
+            If True, only perturb scattering radius parameters (AP and APL)
         """
         # Handle single sample vs batch sample format
         if batch_size == 1:
@@ -311,35 +302,15 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             transformed_samples = np.zeros((batch_size, n_params))
             param_names = []
             param_indices = []
-            
-            # Diagnose uniform values coming from CovarianceBase
-            # if use_copula:
-            #     # Count extreme values
-            #     extreme_count = 0
-            #     exact_one_count = 0
-            #     high_values = []
-                
-            #     # Check all samples
-            #     for batch_idx, batch_samples in enumerate(sample_list):
-            #         for param_idx, u_value in enumerate(batch_samples):
-            #             if u_value > 0.999:
-            #                 extreme_count += 1
-            #                 high_values.append(u_value)
-            #             if u_value >= 0.9999:
-            #                 exact_one_count += 1
-                
-            #     total_values = batch_size * (n_params if batch_size > 1 else len(samples[0]))
-            #     print(f"\nDiagnostic for uniform values in copula sampling:")
-            #     print(f"Total uniform values: {total_values}")
-            #     print(f"Values > 0.999: {extreme_count} ({extreme_count/total_values:.2%})")
-            #     print(f"Values >= 0.9999: {exact_one_count} ({exact_one_count/total_values:.2%})")
-            #     if high_values:
-            #         print(f"Sample of high values: {high_values[:10]}")
         
         # Perturb AP and APL radius parameters
         # Set same_perturbation=True if you want identical perturbations for AP and APL
         self._perturb_radius_parameters(sample_list, operation_mode, use_copula, sampling_method, same_perturbation=True)
-
+        radius_only = False
+        # If radius_only is True, skip the rest of the parameter perturbations
+        if radius_only:
+            return
+        
         # Now process the covariance matrix samples
         for sample_batch_idx, current_samples in enumerate(sample_list):
             # Counter to track which sample we're using within the current batch

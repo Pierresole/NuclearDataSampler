@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional, Dict
 import numpy as np
 
 from ENDFtk.MF2.MT151 import (
@@ -16,6 +16,35 @@ class URREnergyDependentRP:
     GG: List[float] = field(default_factory=list)  # Can be sampled
     GF: List[float] = field(default_factory=list)  # Can be sampled
     GX: List[float] = field(default_factory=list)  # Can be sampled
+    
+    @classmethod
+    def from_endftk(cls, ES: float, D: float, GN: float, GG: float, GF: Optional[float] = None, GX: Optional[float] = None):
+        """
+        Build a URREnergyDependentRP from ENDFtk resonance parameters.
+        
+        Parameters:
+        -----------
+        ES : float
+            Energy value
+        D : float
+            Average level spacing
+        GN : float
+            Neutron width
+        GG : float
+            Gamma width
+        GF : float, optional
+            Fission width
+        GX : float, optional
+            Competitive width
+        """
+        instance = cls(ES=ES)
+        instance.D = [D] if D is not None else []
+        instance.GN = [GN] if GN is not None else []
+        instance.GG = [GG] if GG is not None else []
+        instance.GF = [GF] if GF is not None else []
+        instance.GX = [GX] if GX is not None else []
+        
+        return instance
 
     def write_to_hdf5(self, hdf5_group):
         """
@@ -76,6 +105,44 @@ class URREnergyDependentJValue:
     AMUX: int
     INT: int
     RP: List[URREnergyDependentRP] = field(default_factory=list)
+    
+    @classmethod
+    def from_endftk(cls, j_value):
+        """
+        Build a URREnergyDependentJValue from an ENDFtk UnresolvedEnergyDependentJValue object.
+        
+        Parameters:
+        -----------
+        j_value : UnresolvedEnergyDependentJValue
+            ENDFtk object containing J value parameters
+            
+        Returns:
+        --------
+        URREnergyDependentJValue instance
+        """
+        instance = cls(
+            AJ=j_value.AJ,
+            AMUN=j_value.AMUN,
+            AMUG=j_value.AMUG,
+            AMUF=j_value.AMUF,
+            AMUX=j_value.AMUX,
+            INT=j_value.INT
+        )
+        
+        # Extract energy-dependent parameters
+        energies = j_value.ES
+        for idx, energy in enumerate(energies):
+            rp = URREnergyDependentRP.from_endftk(
+                ES=energy,
+                D=j_value.D[idx],
+                GN=j_value.GN[idx],
+                GG=j_value.GG[idx],
+                GF=j_value.GF[idx] if hasattr(j_value, 'GF') and j_value.GF is not None else None,
+                GX=j_value.GX[idx] if hasattr(j_value, 'GX') and j_value.GX is not None else None
+            )
+            instance.RP.append(rp)
+            
+        return instance
 
     def write_to_hdf5(self, hdf5_group):
         """
@@ -112,19 +179,100 @@ class URREnergyDependentJValue:
         # Read RP
         RP_group = hdf5_group['RP']
         RP_list = []
-        for RP_key in RP_group:
+        for RP_key in sorted(RP_group.keys()):
             RP_value_group = RP_group[RP_key]
             rp = URREnergyDependentRP.read_from_hdf5(RP_value_group)
             RP_list.append(rp)
         instance.RP = RP_list
 
         return instance
+        
+    def reconstruct(self, sample_index=0):
+        """
+        Reconstructs an ENDFtk UnresolvedEnergyDependentJValue from this object.
+        
+        Parameters:
+        -----------
+        sample_index : int
+            Index of the sample to use (0 for original values)
+            
+        Returns:
+        --------
+        UnresolvedEnergyDependentJValue : ENDFtk object with sampled values
+        """
+        energies = []
+        D = []
+        GN = []
+        GG = []
+        GF = []
+        GX = []
+        
+        for rp in self.RP:
+            energies.append(rp.ES)
+            # For each parameter, use the sampled value if available, otherwise use the original
+            D.append(rp.D[sample_index] if len(rp.D) > sample_index else rp.D[0])
+            GN.append(rp.GN[sample_index] if len(rp.GN) > sample_index else rp.GN[0])
+            GG.append(rp.GG[sample_index] if len(rp.GG) > sample_index else rp.GG[0])
+            
+            # Handle optional parameters
+            if rp.GF:
+                GF.append(rp.GF[sample_index] if len(rp.GF) > sample_index else rp.GF[0])
+            else:
+                GF.append(None)
+                
+            if rp.GX:
+                GX.append(rp.GX[sample_index] if len(rp.GX) > sample_index else rp.GX[0])
+            else:
+                GX.append(None)
+        
+        # Create ENDFtk UnresolvedEnergyDependentJValue
+        return UnresolvedEnergyDependentJValue(
+            spin=self.AJ,
+            amun=self.AMUN,
+            amug=self.AMUG,
+            amuf=self.AMUF,
+            amux=self.AMUX,
+            interpolation=self.INT,
+            energies=energies,
+            d=D,
+            gn=GN,
+            gg=GG,
+            gf=GF if any(gf is not None for gf in GF) else None,
+            gx=GX if any(gx is not None for gx in GX) else None
+        )
 
 @dataclass
 class URREnergyDependentLValue:
     AWRI: float
     L: int
     Jlist: List[URREnergyDependentJValue] = field(default_factory=list)
+    
+    @classmethod
+    def from_endftk(cls, l_value):
+        """
+        Build a URREnergyDependentLValue from an ENDFtk UnresolvedEnergyDependentLValue object.
+        
+        Parameters:
+        -----------
+        l_value : UnresolvedEnergyDependentLValue
+            ENDFtk object containing L value parameters
+            
+        Returns:
+        --------
+        URREnergyDependentLValue instance
+        """
+        instance = cls(
+            AWRI=l_value.AWRI,
+            L=l_value.L
+        )
+        
+        # Extract J values
+        j_values = l_value.j_values.to_list()
+        for j_value in j_values:
+            urre_j_value = URREnergyDependentJValue.from_endftk(j_value)
+            instance.Jlist.append(urre_j_value)
+            
+        return instance
 
     def write_to_hdf5(self, hdf5_group):
         """
@@ -153,13 +301,36 @@ class URREnergyDependentLValue:
         # Read Jlist
         Jlist_group = hdf5_group['J_values']
         Jlist = []
-        for J_key in Jlist_group:
+        for J_key in sorted(Jlist_group.keys()):
             J_value_group = Jlist_group[J_key]
             j_value = URREnergyDependentJValue.read_from_hdf5(J_value_group)
             Jlist.append(j_value)
         instance.Jlist = Jlist
 
         return instance
+        
+    def reconstruct(self, sample_index=0):
+        """
+        Reconstructs an ENDFtk UnresolvedEnergyDependentLValue from this object.
+        
+        Parameters:
+        -----------
+        sample_index : int
+            Index of the sample to use (0 for original values)
+            
+        Returns:
+        --------
+        UnresolvedEnergyDependentLValue : ENDFtk object with sampled values
+        """
+        # Reconstruct each J value
+        j_values = [j_value.reconstruct(sample_index) for j_value in self.Jlist]
+        
+        # Create ENDFtk UnresolvedEnergyDependentLValue
+        return UnresolvedEnergyDependentLValue(
+            awri=self.AWRI,
+            l=self.L,
+            jvalues=j_values
+        )
 
 @dataclass
 class URREnergyDependent:
@@ -167,6 +338,34 @@ class URREnergyDependent:
     AP: float   # Scattering radius
     LSSF: int   # Flag if Self-Shielding Factor
     Llist: List[URREnergyDependentLValue] = field(default_factory=list)
+    
+    @classmethod
+    def from_endftk(cls, mf2_resonance_range):
+        """
+        Create a URREnergyDependent object from ENDFtk ResonanceRange.
+        
+        Parameters:
+        -----------
+        mf2_resonance_range : ENDFtk.MF2.MT151.ResonanceRange
+            ENDFtk ResonanceRange object containing unresolved resonance parameters
+            
+        Returns:
+        --------
+        URREnergyDependent instance
+        """
+        instance = cls(
+            SPI=mf2_resonance_range.parameters.SPI,
+            AP=mf2_resonance_range.parameters.AP,
+            LSSF=mf2_resonance_range.parameters.LSSF
+        )
+        
+        # Extract L values
+        l_values = mf2_resonance_range.parameters.l_values.to_list()
+        for l_value in l_values:
+            urre_l_value = URREnergyDependentLValue.from_endftk(l_value)
+            instance.Llist.append(urre_l_value)
+            
+        return instance
 
     def write_to_hdf5(self, hdf5_group):
         """
@@ -201,149 +400,65 @@ class URREnergyDependent:
         # Read Llist
         Llist_group = hdf5_group['L_values']
         Llist = []
-        for L_key in Llist_group:
+        for L_key in sorted(Llist_group.keys()):
             L_value_group = Llist_group[L_key]
             l_value = URREnergyDependentLValue.read_from_hdf5(L_value_group)
             Llist.append(l_value)
         instance.Llist = Llist
 
         return instance
-
+        
     def extract_parameters(self, mf2_resonance_range):
         """
         Extracts the mean parameters from MF2 and constructs the URREnergyDependent object.
+        This is a legacy method - use from_endftk class method instead for new code.
         """
-        l_values = mf2_resonance_range.parameters.l_values.to_list()
-
-        self.L_values = []  # List to store (L, J) groups
-
-        for l_value in l_values:
-            L = l_value.L
-            awri = l_value.AWRI
-            j_values = l_value.j_values.to_list()
-            urre_l_value = URREnergyDependentLValue(
-                AWRI=awri,
-                L=L
-            )
-
-            for j_value in j_values:
-                J = j_value.AJ
-                urre_j_value = URREnergyDependentJValue(
-                    AJ=J,
-                    AMUN=j_value.AMUN,
-                    AMUG=j_value.AMUG,
-                    AMUF=j_value.AMUF,
-                    AMUX=j_value.AMUX,
-                    INT=j_value.INT
-                )
-
-                energies = j_value.ES
-                # For each energy, create URREnergyDependentRP
-                for idx, energy in enumerate(energies):
-                    rp = URREnergyDependentRP(
-                        ES=energy,
-                        D=[j_value.D[idx]],    # Initialize with original value
-                        GN=[j_value.GN[idx]],
-                        GG=[j_value.GG[idx]],
-                        GF=[j_value.GF[idx]] if hasattr(j_value, 'GF') else [],
-                        GX=[j_value.GX[idx]] if hasattr(j_value, 'GX') else []
-                    )
-                    urre_j_value.RP.append(rp)
-
-                urre_l_value.Jlist.append(urre_j_value)
-                self.L_values.append({'L': L, 'J': J})
-
-            self.Llist.append(urre_l_value)
+        # Use the class method for consistency
+        new_obj = self.from_endftk(mf2_resonance_range)
+        
+        # Copy attributes to self
+        self.SPI = new_obj.SPI
+        self.AP = new_obj.AP
+        self.LSSF = new_obj.LSSF
+        self.Llist = new_obj.Llist
+        self.L_values = []  # For backwards compatibility
+        
+        # Populate L_values for backwards compatibility
+        for l_value in self.Llist:
+            for j_value in l_value.Jlist:
+                self.L_values.append({'L': l_value.L, 'J': j_value.AJ})
+    
+    def reconstruct(self, sample_index=0):
+        """
+        Reconstructs an ENDFtk UnresolvedEnergyDependent object from this instance.
+        
+        Parameters:
+        -----------
+        sample_index : int
+            Index of the sample to use (0 for original values)
+            
+        Returns:
+        --------
+        UnresolvedEnergyDependent : ENDFtk object with sampled values
+        """
+        # Reconstruct each L value
+        l_values = [l_value.reconstruct(sample_index) for l_value in self.Llist]
+        
+        # Create ENDFtk UnresolvedEnergyDependent
+        return UnresolvedEnergyDependent(
+            spin=self.SPI,
+            ap=self.AP,
+            lssf=self.LSSF,
+            lvalues=l_values
+        )
     
     def update_resonance_parameters(self, sample_index=1):
         """
         Returns a new UnresolvedEnergyDependent object with the sampled parameters.
+        Legacy method - use reconstruct() instead for new code.
 
         Parameters:
         - sample_index: Index of the sample to use (default is 1, since index 0 is the original value).
         """
-        new_l_values = []
-
-        for l_value in self.Llist:
-            L = l_value.L
-            awri = l_value.AWRI
-            new_j_values = []
-
-            for j_value in l_value.Jlist:
-                J = j_value.AJ
-                amun = j_value.AMUN
-                amug = j_value.AMUG
-                amuf = j_value.AMUF
-                amux = j_value.AMUX
-                interpolation = j_value.INT
-
-                energies = []
-                D = []
-                GN = []
-                GG = []
-                GF = []
-                GX = []
-
-                for rp in j_value.RP:
-                    energies.append(rp.ES)
-                    # Fetch the sampled values using sample_index
-                    D.append(rp.D[sample_index])
-                    GN.append(rp.GN[sample_index])
-                    # Handle GG
-                    if len(rp.GG) > sample_index:
-                        GG.append(rp.GG[sample_index])
-                    else:
-                        GG.append(rp.GG[0])  # Use original value if not sampled
-                    # Handle GF
-                    if rp.GF:
-                        if len(rp.GF) > sample_index:
-                            GF.append(rp.GF[sample_index])
-                        else:
-                            GF.append(rp.GF[0])
-                    else:
-                        GF.append(None)
-                    # Handle GX
-                    if rp.GX:
-                        if len(rp.GX) > sample_index:
-                            GX.append(rp.GX[sample_index])
-                        else:
-                            GX.append(rp.GX[0])
-                    else:
-                        GX.append(None)
-
-                # Create new UnresolvedEnergyDependentJValue
-                new_j_value = UnresolvedEnergyDependentJValue(
-                    spin=J,
-                    amun=amun,
-                    amug=amug,
-                    amuf=amuf,
-                    amux=amux,
-                    interpolation=interpolation,
-                    energies=energies,
-                    d=D,
-                    gn=GN,
-                    gg=GG,
-                    gf=GF if any(gf is not None for gf in GF) else None,
-                    gx=GX if any(gx is not None for gx in GX) else None
-                )
-
-                new_j_values.append(new_j_value)
-
-            # Create new UnresolvedEnergyDependentLValue
-            new_l_value = UnresolvedEnergyDependentLValue(
-                awri=awri,
-                l=L,
-                jvalues=new_j_values
-            )
-
-            new_l_values.append(new_l_value)
-
-        # Create new UnresolvedEnergyDependent
-        parameters = UnresolvedEnergyDependent(
-            spin=self.SPI,
-            ap=self.AP,
-            lssf=self.LSSF,
-            lvalues=new_l_values
-        )
-
-        return parameters
+        # Use the new reconstruct method for consistency
+        return self.reconstruct(sample_index)
