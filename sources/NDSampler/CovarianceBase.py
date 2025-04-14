@@ -19,7 +19,6 @@ class CovarianceBase(ABC):
         self.L_matrix = None
         self.is_cholesky = False
         self.sampled_values = None
-        self.L_R = None  # Correlation matrix decomposition for copula sampling
 
     def delete_parameters(self, indices_to_delete):
         """
@@ -76,16 +75,47 @@ class CovarianceBase(ABC):
         # Update the covariance matrix
         self.covariance_matrix = self.covariance_matrix[np.ix_(non_zero_indices, non_zero_indices)]
             
-    def compute_L_matrix(self):
+    def compute_L_matrix(self, method='svd'):
+        
+        std_devs = np.sqrt(np.diag(self.covariance_matrix))
+        n_params = len(std_devs)
+        # Create correlation matrix
+        corr_matrix = np.zeros_like(self.covariance_matrix)
+        for i in range(n_params):
+            for j in range(n_params):
+                if std_devs[i] > 0 and std_devs[j] > 0:
+                    corr_matrix[i, j] = self.covariance_matrix[i, j] / (std_devs[i] * std_devs[j])
+                else:
+                    # Handle zero standard deviations - set correlation to 0
+                    corr_matrix[i, j] = 0.0 if i != j else 1.0
         try:
-            self.L_matrix = np.linalg.cholesky(self.covariance_matrix)
-            self.is_cholesky = True  
+            if method == 'cholesky':
+                # Try Cholesky decomposition
+                self.L_matrix = np.linalg.cholesky(corr_matrix)
+                self.is_cholesky = True
+            elif method == 'svd':
+                # Use SVD decomposition: C = U Σ U^T ⇒ L_matrix = U sqrt(Σ)
+                U, s, _ = np.linalg.svd(corr_matrix)
+                self.L_matrix = U @ np.diag(np.sqrt(s))
+                self.is_cholesky = False  
+            elif method == 'eigen':
+                # Eigen decomposition fallback (for non-positive definite matrix)
+                eigenvalues, eigenvectors = np.linalg.eigh(corr_matrix)
+                eigenvalues[eigenvalues < 0] = 0
+                self.L_matrix = eigenvectors @ np.diag(np.sqrt(eigenvalues))
+                self.is_cholesky = False  
+            else:
+                raise ValueError("Unknown decomposition method.")
         except np.linalg.LinAlgError:
-            # Handle non-positive definite covariance matrix
-            eigenvalues, eigenvectors = np.linalg.eigh(self.covariance_matrix)
-            eigenvalues[eigenvalues < 0] = 0
-            self.L_matrix = eigenvectors @ np.diag(np.sqrt(eigenvalues))
-            self.is_cholesky = False  
+            # Handle failure gracefully
+            print("Decomposition failed using method:", method)
+            raise
+        
+        # if debug:
+        #     print("Correlation matrix decomposition:")
+        #     print(f"Using Cholesky: {np.allclose(self.L_matrix @ self.L_matrix.T, corr_matrix)}")
+        #     if not np.allclose(self.L_matrix @ self.L_matrix.T, corr_matrix):
+        #         print("Using spectral decomposition instead")
 
     def write_to_hdf5(self, hdf5_group):
         """
@@ -112,6 +142,7 @@ class CovarianceBase(ABC):
     @abstractmethod
     def update_tape(self):
         pass
+
 
     def sample_parameters(self, sampling_method="Simple", mode="stack", use_copula=False, num_samples=1, debug=False):
         """
@@ -173,7 +204,8 @@ class CovarianceBase(ABC):
             else:
                 from scipy.stats import norm
                 z = norm.ppf(u_uniform_raw)
-                u_uniform = None      
+                u_uniform = None  
+                    
         elif sampling_method == "Sobol":
             # Sobol sequence sampling
             from scipy.stats import qmc
@@ -215,42 +247,11 @@ class CovarianceBase(ABC):
             # Transform each uniform sample to independent standard normal
             z_independent = norm.ppf(u_uniform)
             
-            # CORRECTED: We need to decompose the correlation matrix, not the covariance matrix
-            # @TODO: we could store R instead of L
-            # Calculate correlation matrix from covariance matrix
-            self.covariance_matrix = self.L_matrix @ self.L_matrix.T
-            if not hasattr(self, 'L_R'):  # Calculate L_R only once and store it
-                std_devs = np.sqrt(np.diag(self.covariance_matrix))
-                # Create correlation matrix
-                corr_matrix = np.zeros_like(self.covariance_matrix)
-                for i in range(n_params):
-                    for j in range(n_params):
-                        if std_devs[i] > 0 and std_devs[j] > 0:
-                            corr_matrix[i, j] = self.covariance_matrix[i, j] / (std_devs[i] * std_devs[j])
-                        else:
-                            # Handle zero standard deviations - set correlation to 0
-                            corr_matrix[i, j] = 0.0 if i != j else 1.0
-                
-                try:
-                    # Decompose the correlation matrix
-                    self.L_R = np.linalg.cholesky(corr_matrix)
-                except np.linalg.LinAlgError:
-                    # Handle non-positive definite correlation matrix
-                    eigenvalues, eigenvectors = np.linalg.eigh(corr_matrix)
-                    eigenvalues[eigenvalues < 0] = 0
-                    self.L_R = eigenvectors @ np.diag(np.sqrt(eigenvalues))
-                
-                if debug:
-                    print("Correlation matrix decomposition:")
-                    print(f"Using Cholesky: {np.allclose(self.L_R @ self.L_R.T, corr_matrix)}")
-                    if not np.allclose(self.L_R @ self.L_R.T, corr_matrix):
-                        print("Using spectral decomposition instead")
-            
-            # Apply correlation structure to each sample using L_R instead of L_matrix
+            # Apply correlation structure to each sample using L_matrix instead of L_matrix
             z_correlated = np.zeros_like(z_independent)
             for i in range(batch_size):
-                # Use L_R (correlation decomposition) instead of L_matrix (covariance decomposition)
-                z_correlated[i] = self.L_R @ z_independent[i]
+                # Use L_matrix (correlation decomposition)
+                z_correlated[i] = self.L_matrix @ z_independent[i]
             
             # IMPORTANT FIX: Bound z-values to prevent extreme CDF values
             # Limit to ±8 standard deviations, which gives CDF values around 1e-15 and 1-1e-15
