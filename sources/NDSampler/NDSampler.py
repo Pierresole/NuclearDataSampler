@@ -10,11 +10,13 @@ from dataclasses import dataclass, field
 class SamplerSettings:
     """Dataclass to store settings for nuclear data sampling."""
     sampling: str = "Simple"  # Options: 'Simple', 'LHS', 'Sobol', 'Halton', etc.
-    widths_to_reduced: bool = False
     num_samples: int = 1
     random_seed: Optional[int] = None
     mode: str = "stack" # Keep in memory (Stack) all samples or draw n' replace
     debug: bool = False  # Debug mode for printing sample matrices without updating tapes
+    
+    # Parmater settings specific to resonances
+    widths_to_reduced: bool = False
     
     def __post_init__(self):
         """Validate settings after initialization."""
@@ -52,18 +54,27 @@ class NDSampler:
         for MF, MT_dict in self.covariance_dict.items():
             if mat.has_MF(MF):
                 mf_section = mat.MF(MF)
-                for MT in MT_dict:
+                for MT, value_list in MT_dict.items():
                     if mf_section.has_MT(MT):
                         if MF == 32:
                             from .resonance.ResonanceRangeCovariance import ResonanceRangeCovariance
                             covariance_objects = []
+                            
+                            # Extract the list of NER values from the covariance dictionary
+                            ner_list = value_list  # For MF=32, this is typically a list of NER values [0, 1, ...]
+                            
+                            # Pass the NER list to fill_from_resonance_range
+                            print(f"Processing MF={MF}, MT={MT} with NER list: {ner_list}")
                             ResonanceRangeCovariance.fill_from_resonance_range(
                                 self.original_tape, 
                                 covariance_objects, 
+                                ner_list=ner_list,
                                 want_reduced=self.settings.widths_to_reduced
                             )
+                            
                             self.covariance_objects.extend(covariance_objects)
                             self._add_covariance_to_hdf5(covariance_objects, "ResonanceRange")
+                            
                         elif MF == 34:
                             from .angular.AngularDistributionCovariance import AngularDistributionCovariance
                             covariance_objects = []
