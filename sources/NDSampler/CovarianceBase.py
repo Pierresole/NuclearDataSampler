@@ -94,7 +94,7 @@ class CovarianceBase(ABC):
                 self.L_matrix = np.linalg.cholesky(corr_matrix)
                 self.is_cholesky = True
             elif method == 'svd':
-                # Use SVD decomposition: C = U Σ U^T ⇒ L_matrix = U sqrt(Σ)
+                # Use SVD decomposition: C = U Sigma U^T => L_matrix = U sqrt(Sigma)
                 U, s, _ = np.linalg.svd(corr_matrix)
                 self.L_matrix = U @ np.diag(np.sqrt(s))
                 self.is_cholesky = False  
@@ -143,6 +143,130 @@ class CovarianceBase(ABC):
     def update_tape(self):
         pass
 
+    def calculate_adjusted_mean(self, nominal_mean, a, b=10.0):
+        """
+        Calculate the adjusted mean for a truncated normal distribution to ensure
+        that the truncated distribution has the desired nominal mean.
+        
+        Parameters:
+        -----------
+        nominal_mean : float
+            The desired mean for the truncated distribution
+        a : float
+            Lower bound in standard deviations
+        b : float
+            Upper bound in standard deviations (default: 10.0)
+            
+        Returns:
+        --------
+        float
+            The adjusted mean parameter (loc) to use in truncnorm
+        """
+        from scipy.stats import norm
+        from scipy.optimize import root_scalar
+        
+        # For wide bounds (where truncation has minimal effect), return nominal mean
+        if a < -5 and b > 5:
+            return 0.0  # No adjustment needed for standard normal
+            
+        # Define the function that computes the mean of truncated normal
+        # with given mu (loc) parameter. We want this to equal nominal_mean.
+        def mean_difference(mu):
+            # Adjust bounds for the new mu
+            a_adj = a - mu
+            b_adj = b - mu
+            
+            # Calculate truncated mean for this mu
+            # Formula: mu + (pdf(a_adj) - pdf(b_adj))/(cdf(b_adj) - cdf(a_adj))
+            pdf_a = norm.pdf(a_adj)
+            pdf_b = norm.pdf(b_adj)
+            cdf_a = norm.cdf(a_adj)
+            cdf_b = norm.cdf(b_adj)
+            
+            # Avoid division by zero
+            if abs(cdf_b - cdf_a) < 1e-10:
+                return 0.0
+                
+            trunc_mean = mu + (pdf_a - pdf_b)/(cdf_b - cdf_a)
+            
+            # Return difference from desired mean
+            return trunc_mean - nominal_mean
+        
+        # Use root-finding to solve for mu
+        try:
+            result = root_scalar(mean_difference, bracket=[-5.0, 5.0], method='brentq')
+            if result.converged:
+                return result.root
+        except:
+            # If root-finding fails, use approximation
+            pass
+            
+        # Fallback approximation: shift mu in opposite direction of truncation effect
+        # For one-sided truncation (b is large), this works reasonably well
+        return -a/3.0 if a > -5 else 0.0
+
+    def calculate_adjusted_sigma(self, nominal_sigma, a, b=10.0, adjusted_mean=0.0):
+        """
+        Calculate the adjusted standard deviation for a truncated normal distribution
+        to ensure that the truncated distribution has the desired nominal standard deviation.
+        
+        The formula is derived from the variance of a truncated normal distribution:
+        sigma^2 * [1 + (a*pdf_a - b*pdf_b)/(cdf_b - cdf_a) - ((pdf_a - pdf_b)/(cdf_b - cdf_a))^2]
+        
+        Parameters:
+        -----------
+        nominal_sigma : float
+            The desired standard deviation for the truncated distribution
+        a : float
+            Lower bound in original standard deviations
+        b : float
+            Upper bound in original standard deviations (default: 10.0)
+        adjusted_mean : float
+            The adjusted mean parameter, if already calculated
+            
+        Returns:
+        --------
+        float
+            The adjusted scale parameter to use in truncnorm
+        """
+        from scipy.stats import norm
+        from scipy.optimize import root_scalar
+        
+        # For wide bounds (where truncation has minimal effect), return nominal sigma
+        if a < -5 and b > 5:
+            return nominal_sigma  # No adjustment needed for mild truncation
+        
+        # Adjust bounds based on the adjusted mean
+        a_adj = a - adjusted_mean
+        b_adj = b - adjusted_mean
+        
+        # Calculate components for the variance formula
+        pdf_a = norm.pdf(a_adj)
+        pdf_b = norm.pdf(b_adj)
+        cdf_a = norm.cdf(a_adj)
+        cdf_b = norm.cdf(b_adj)
+        
+        # Avoid division by zero
+        if abs(cdf_b - cdf_a) < 1e-10:
+            return nominal_sigma
+        
+        # Term 1: (a*pdf_a - b*pdf_b)/(cdf_b - cdf_a)
+        term1 = (a_adj * pdf_a - b_adj * pdf_b) / (cdf_b - cdf_a)
+        
+        # Term 2: ((pdf_a - pdf_b)/(cdf_b - cdf_a))^2
+        term2 = ((pdf_a - pdf_b) / (cdf_b - cdf_a)) ** 2
+        
+        # Variance reduction factor due to truncation
+        var_factor = 1.0 + term1 - term2
+        
+        # Avoid negative or very small variance factors
+        if var_factor < 0.1:
+            var_factor = 0.1  # Set a minimum factor to avoid numerical issues
+        
+        # Calculate adjusted sigma
+        adjusted_sigma = nominal_sigma / np.sqrt(var_factor)
+        
+        return adjusted_sigma
 
     def sample_parameters(self, sampling_method="Simple", mode="stack", use_copula=False, num_samples=1, debug=False):
         """

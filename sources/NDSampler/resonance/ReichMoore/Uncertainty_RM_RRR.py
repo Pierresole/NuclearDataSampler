@@ -4,6 +4,7 @@ from .Parameters_RM_RRR import ReichMooreData
 from ..ResonanceRangeCovariance import ResonanceRangeCovariance
 from ENDFtk import tree
 import time
+from scipy.optimize import root_scalar
 
 class Uncertainty_RM_RRR(ResonanceRangeCovariance):
     def __init__(self, mf2_resonance_ranges, mf32_resonance_range, NER):
@@ -352,29 +353,30 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                                 if constraint_type == 'positive' and nominal_value > 0:
                                     # For positive parameters, use truncated normal
                                     # Calculate the lower bound in standard units to prevent negative values
-                                    # For absolute uncertainty, the lower bound is -nominal_value/uncertainty
                                     a = -nominal_value / uncertainty if uncertainty > 0 else -np.inf
                                     
-                                    # IMPROVED: Handle the case where nominal value is very close to zero
-                                    if a < -10:
+                                    # Adjust mean and standard deviation if needed
+                                    if a > -10:  # Only adjust if truncation has significant effect
+                                        # Calculate adjusted mean parameter for truncnorm
+                                        loc = self.calculate_adjusted_mean(0.0, a)
+                                        
+                                        # Calculate adjusted standard deviation for truncnorm
+                                        scale = self.calculate_adjusted_sigma(1.0, a, 10.0, loc)
+                                        
+                                        # Use truncated normal with adjusted parameters
+                                        z_value = truncnorm.ppf(u_value, a - loc, 10.0 - loc, loc=loc, scale=scale)
+                                        
+                                        # Apply adjusted uncertainty
+                                        sampled_value = nominal_value + z_value * uncertainty # / scale
+                                    else:
                                         # If lower bound is far away, use regular normal
                                         z_value = norm.ppf(u_value)
-                                    else:
-                                        # Use truncated normal with safe bounds
-                                        # Limit upper bound to avoid numerical issues
-                                        z_value = truncnorm.ppf(u_value, a, 10.0, loc=0, scale=1)
+                                        sampled_value = nominal_value + z_value * uncertainty
                                 else:
                                     # For signed parameters, use standard normal
                                     # Use clipped uniform value to prevent numerical issues
                                     z_value = norm.ppf(u_value)
-                                
-                                # Apply absolute uncertainty to the nominal value
-                                sampled_value = nominal_value + z_value * uncertainty
-                                
-                                # Debug print only if specifically requested
-                                # if debug and u_value > 0.99:
-                                #     print(f"Parameter {param_name}_L{l_group_idx}_R{resonance_idx}: nominal={nominal_value:.6g}, "
-                                #           f"u={u_value:.10f}, uncert={uncertainty:.6g}, z={z_value:.6g}, sampled={sampled_value:.6g}")
+                                    sampled_value = nominal_value + z_value * uncertainty
                             else:
                                 # Standard approach - samples are already z-values
                                 sample = current_samples[sample_index]
@@ -432,11 +434,102 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             print(f"Number of samples: {batch_size}")
             print(f"Sampling method: {sampling_method}")
             
+            # Collect nominal values and uncertainties for parameters
+            nominal_values = np.zeros(n_params)
+            uncertainties = np.zeros(n_params)
+            
+            # Map parameter indices to their nominal values and uncertainties
+            param_idx_to_info = {}
+            
+            for l_group_idx, l_group in enumerate(self.rm_data.LGroups):
+                for resonance_idx, resonance in enumerate(l_group.resonances):
+                    param_info = [
+                        (resonance.ER, resonance.DER, 'ER', 0),
+                        (resonance.GN, resonance.DGN, 'GN', 1),
+                        (resonance.GG, resonance.DGG, 'GG', 2),
+                        (resonance.GFA, resonance.DGFA, 'GFA', 3),
+                        (resonance.GFB, resonance.DGFB, 'GFB', 4)
+                    ]
+                    
+                    for param_list, uncertainty, param_name, param_type in param_info:
+                        if uncertainty is not None and param_list is not None and len(param_list) > 0:
+                            param_key = f"{param_name}_L{l_group_idx}_R{resonance_idx}"
+                            # Find the index in param_names (if it exists)
+                            if param_key in param_names:
+                                idx = param_names.index(param_key)
+                                nominal_values[idx] = param_list[0]
+                                uncertainties[idx] = uncertainty
+                                param_idx_to_info[idx] = (param_key, param_list[0], uncertainty)
+            
+            # Calculate sample statistics
+            sample_means = np.mean(transformed_samples, axis=0) if batch_size > 1 else transformed_samples[0]
+            sample_stds = np.std(transformed_samples, axis=0) if batch_size > 1 else np.zeros(n_params)
+            
+            # Calculate percentage differences for means and standard deviations
+            mean_pct_diff = np.zeros(n_params)
+            std_pct_diff = np.zeros(n_params)
+            
+            for i in range(n_params):
+                if i in param_idx_to_info:
+                    _, nominal, uncert = param_idx_to_info[i]
+                    # Avoid division by zero for mean percentage difference
+                    if abs(nominal) > 1e-10:
+                        mean_pct_diff[i] = 100.0 * (sample_means[i] - nominal) / nominal
+                    else:
+                        mean_pct_diff[i] = 0.0 if abs(sample_means[i]) < 1e-10 else 100.0  # 100% if nominal near zero but sample isn't
+                        
+                    # Avoid division by zero for std percentage difference
+                    if uncert > 1e-10:
+                        std_pct_diff[i] = 100.0 * (sample_stds[i] - uncert) / uncert
+                    else:
+                        std_pct_diff[i] = 0.0 if sample_stds[i] < 1e-10 else 100.0  # 100% if uncert near zero but sample isn't
+            
+            # Create parameter info array for sorting
+            param_diff_info = []
+            for i in range(n_params):
+                if i in param_idx_to_info:
+                    param_name, nominal, uncert = param_idx_to_info[i]
+                    param_diff_info.append({
+                        'param_name': param_name,
+                        'nominal': nominal,
+                        'uncertainty': uncert,
+                        'mean': sample_means[i],
+                        'std': sample_stds[i],
+                        'mean_pct_diff': mean_pct_diff[i],
+                        'std_pct_diff': std_pct_diff[i]
+                    })
+                    
+            # Sort by mean percentage difference (abs value)
+            sorted_by_mean_diff = sorted(param_diff_info, key=lambda x: abs(x['mean_pct_diff']), reverse=True)
+            # Sort by std percentage difference (abs value)
+            sorted_by_std_diff = sorted(param_diff_info, key=lambda x: abs(x['std_pct_diff']), reverse=True)
+            
             # Print sample matrix
             print("\nTransformed sample matrix (first 5 samples, first 10 parameters):")
             display_samples = transformed_samples[:min(5, batch_size), :min(10, n_params)]
             for i, sample in enumerate(display_samples):
                 print(f"Sample {i+1}: {sample}")
+            
+            # Print comparison of nominal, uncertainty, and sample statistics
+            print("\nParameter verification (first 10 parameters):")
+            print(f"{'Parameter':<20} {'Nominal':<12} {'Uncertainty':<12} {'Mean':<12} {'Std Dev':<12} {'Std/Uncert':<12}")
+            for i in range(min(10, n_params)):
+                if i in param_idx_to_info:
+                    param_key, nominal, uncert = param_idx_to_info[i]
+                    ratio = sample_stds[i]/uncert if uncert > 0 else 0
+                    print(f"{param_key:<20} {nominal:<12.6g} {uncert:<12.6g} {sample_means[i]:<12.6g} {sample_stds[i]:<12.6g} {ratio:<12.6g}")
+            
+            # Print parameters with most divergent means
+            print("\nTop 5 parameters with largest mean percentage difference:")
+            print(f"{'Parameter':<20} {'Nominal':<12} {'Mean':<12} {'Diff%':<12} {'Uncertainty':<12}")
+            for i, info in enumerate(sorted_by_mean_diff[:5]):
+                print(f"{info['param_name']:<20} {info['nominal']:<12.6g} {info['mean']:<12.6g} {info['mean_pct_diff']:<12.2f} {info['uncertainty']:<12.6g}")
+                
+            # Print parameters with most divergent standard deviations
+            print("\nTop 5 parameters with largest std dev percentage difference:")
+            print(f"{'Parameter':<20} {'Uncertainty':<12} {'Std Dev':<12} {'Diff%':<12} {'Nominal':<12}")
+            for i, info in enumerate(sorted_by_std_diff[:5]):
+                print(f"{info['param_name']:<20} {info['uncertainty']:<12.6g} {info['std']:<12.6g} {info['std_pct_diff']:<12.2f} {info['nominal']:<12.6g}")
             
             # Calculate and print sample correlations
             if batch_size > 1:
@@ -457,12 +550,36 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                     for row in orig_corr_display:
                         print(" ".join([f"{x:.2f}" for x in row]))
             
-            # Save to CSV with parameter names as headers
+            # Save to CSV with parameter names as headers and statistics in first rows
             header = ",".join(param_names[:min(20, n_params)])  # First 20 params for readability
-            np.savetxt(f'transformed_samples_{self.__class__.__name__}.csv', 
-                    transformed_samples[:, :min(20, n_params)], 
-                    delimiter=',', header=header, comments="")
-            print(f"\nTransformed samples saved to transformed_samples_{self.__class__.__name__}.csv")
+            
+            # Create a new array with statistics rows added (including percentage differences)
+            csv_data = np.vstack([
+                nominal_values[:min(20, n_params)],
+                uncertainties[:min(20, n_params)],
+                sample_means[:min(20, n_params)],
+                sample_stds[:min(20, n_params)],
+                mean_pct_diff[:min(20, n_params)],
+                std_pct_diff[:min(20, n_params)],
+                transformed_samples[:, :min(20, n_params)]
+            ])
+            
+            # Save with row labels
+            csv_filename = f'transformed_samples_{self.__class__.__name__}.csv'
+            with open(csv_filename, 'w') as f:
+                f.write("# Row,"+header+"\n")
+                f.write(f"Nominal,{','.join([f'{x:.8g}' for x in nominal_values[:min(20, n_params)]])}\n")
+                f.write(f"Uncertainty,{','.join([f'{x:.8g}' for x in uncertainties[:min(20, n_params)]])}\n")
+                f.write(f"SampleMean,{','.join([f'{x:.8g}' for x in sample_means[:min(20, n_params)]])}\n")
+                f.write(f"SampleStdDev,{','.join([f'{x:.8g}' for x in sample_stds[:min(20, n_params)]])}\n")
+                f.write(f"MeanPctDiff,{','.join([f'{x:.8g}' for x in mean_pct_diff[:min(20, n_params)]])}\n")
+                f.write(f"StdPctDiff,{','.join([f'{x:.8g}' for x in std_pct_diff[:min(20, n_params)]])}\n")
+                
+                # Add the actual samples
+                for i in range(min(batch_size, transformed_samples.shape[0])):
+                    f.write(f"Sample{i+1},{','.join([f'{x:.8g}' for x in transformed_samples[i, :min(20, n_params)]])}\n")
+            
+            print(f"\nTransformed samples and statistics saved to {csv_filename}")
             print("=" * 50)
 
     def update_tape(self, tape, sample_index=1, sample_name=""):

@@ -160,27 +160,6 @@ class ResonanceRangeCovariance(CovarianceBase, ABC):
             return idx
         return None
         
-    # @classmethod
-    # def from_resonance_range(cls, resonance_range, mf2_resonance_ranges, NER):
-    #     LRU = resonance_range.LRU
-    #     LRF = resonance_range.LRF
-    #     # if LRU == 1 and LRF == 2:
-    #     #     from .RRR_RMUncertainty import RRRReichMooreUncertainty
-    #     #     from .MLBWUncertainty import MultiLevelBreitWignerCovariance
-    #     #     return MultiLevelBreitWignerCovariance(resonance_range, mf2_resonance_ranges, NER)
-    #     if LRU == 1 and LRF == 3:
-    #         from .RRR_RM_Uncertainty import ReichMooreCovariance
-    #         from .RRR_RM_Uncertainty import RRRReichMooreUncertainty
-    #         return ReichMooreCovariance(resonance_range, mf2_resonance_ranges, NER)
-    #     # elif LRU == 1 and LRF == 7:
-    #     #     from .RMatrixLimitedUncertainty import RMatrixLimitedCovariance
-    #     #     return RMatrixLimitedCovariance(resonance_range, mf2_resonance_ranges, NER)
-    #     elif LRU == 2 and LRF == 1:
-    #         from .URR_BW_Uncertainty import URRBreitWignerUncertainty
-    #         return URRBreitWignerUncertainty(resonance_range, mf2_resonance_ranges, NER)
-    #     else:
-    #         raise NotImplementedError("Resonance covariance format not supported")
-
     def _update_resonance_range(self, tape, updated_parameters : ENDFtk.MF2.MT151.ResonanceParameters):
         """
         Updates the resonance range in the tape with sampled parameters.
@@ -297,18 +276,6 @@ class ResonanceRangeCovariance(CovarianceBase, ABC):
                 pass
             covariance_objects.append(covariance_obj)
         
-    # @abstractmethod
-    # def write_additional_data_to_hdf5(self, hdf5_group):
-    #     """
-    #     Abstract method to write format-specific data to HDF5.
-    #     To be implemented by derived classes.
-    #     """
-    #     pass
-
-    # @abstractmethod
-    # def print_parameters(self):
-    #     pass
-    
     @abstractmethod
     def update_tape(self):
         pass
