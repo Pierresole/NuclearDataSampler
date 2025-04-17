@@ -51,6 +51,7 @@ class CovarianceBase(ABC):
         if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
             self.std_dev_vector = np.delete(self.std_dev_vector, indices_to_delete)
 
+
     def remove_zero_variance_parameters(self):
         """
         Removes parameters with zero variance and updates the covariance matrix accordingly.
@@ -74,6 +75,7 @@ class CovarianceBase(ABC):
             
         # Update the covariance matrix
         self.covariance_matrix = self.covariance_matrix[np.ix_(non_zero_indices, non_zero_indices)]
+        
             
     def compute_L_matrix(self, method='svd'):
         
@@ -116,6 +118,7 @@ class CovarianceBase(ABC):
         #     print(f"Using Cholesky: {np.allclose(self.L_matrix @ self.L_matrix.T, corr_matrix)}")
         #     if not np.allclose(self.L_matrix @ self.L_matrix.T, corr_matrix):
         #         print("Using spectral decomposition instead")
+
 
     def write_to_hdf5(self, hdf5_group):
         """
@@ -205,6 +208,7 @@ class CovarianceBase(ABC):
         # For one-sided truncation (b is large), this works reasonably well
         return -a/3.0 if a > -5 else 0.0
 
+
     def calculate_adjusted_sigma(self, nominal_sigma, a, b=10.0, adjusted_mean=0.0):
         """
         Calculate the adjusted standard deviation for a truncated normal distribution
@@ -267,6 +271,7 @@ class CovarianceBase(ABC):
         adjusted_sigma = nominal_sigma / np.sqrt(var_factor)
         
         return adjusted_sigma
+
 
     def sample_parameters(self, sampling_method="Simple", mode="stack", use_copula=False, num_samples=1, debug=False):
         """
