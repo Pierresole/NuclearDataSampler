@@ -7,6 +7,12 @@ import time
 from scipy.optimize import root_scalar
 
 class Uncertainty_RM_RRR(ResonanceRangeCovariance):
+    """
+    Class to handle the uncertainty of Reich-Moore resonance parameters.
+    NER : int, energy range index
+    rm_data : ReichMooreData, data model with uncertainty information
+    """
+    
     def __init__(self, mf2_resonance_ranges, mf32_resonance_range, NER):
         # Initialize base attributes
         self.NER = NER
@@ -31,12 +37,14 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         self.compute_L_matrix()
         print(f"Time for compute_L_matrix: {time.time() - start_time:.4f} seconds")
         
+        
     def get_covariance_type(self):
         """
         Override to return the specific covariance type.
         """
         return "Uncertainty_RM_RRR"
         
+
     def _filter_covariance_matrix(self):
         """
         Removes zero variance parameters from the covariance matrix and reports on removed parameters.
@@ -69,6 +77,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         self.covariance_matrix = self.covariance_matrix[np.ix_(non_zero_indices, non_zero_indices)]
         
         print(f"Filtered covariance matrix size: {filtered_size}x{filtered_size}")
+
 
     def _perturb_radius_parameters(self, sample_list, operation_mode, use_copula, sampling_method, same_perturbation=False):
         """
@@ -260,6 +269,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                                 l_group.APL = [l_group.APL[0]]
                             # Add the new sample
                             l_group.APL.append(sampled_apl)
+
 
     def _apply_samples(self, samples, mode="stack", use_copula=False, batch_size=1, 
                     sampling_method="Simple", debug=False, radius_only=False):
@@ -582,6 +592,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             print(f"\nTransformed samples and statistics saved to {csv_filename}")
             print("=" * 50)
 
+
     def update_tape(self, tape, sample_index=1, sample_name=""):
         """
         Updates the tape with the sampled parameters.
@@ -592,6 +603,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         """
         self._update_resonance_range(tape, updated_parameters=self.rm_data.reconstruct(sample_index))
 
+
     def extract_covariance_matrix(self, mf32_range):
         """
         Extracts the covariance matrix using the method from the base class.
@@ -600,6 +612,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             self.extract_covariance_matrix_LCOMP1(mf32_range)
         else:
             raise ValueError(f"Unsupported LCOMP value: {mf32_range.parameters.LCOMP}")
+       
         
     def extract_covariance_matrix_LCOMP1(self, mf32_range):
         """
@@ -631,16 +644,6 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         # Set the covariance matrix as an attribute of CovarianceBase
         super().__setattr__('covariance_matrix', cov_matrix)
 
-    def construct_mean_vector(self):
-        """
-        Constructs the mean vector from the mean parameters.
-        """
-        mean_values = []
-        for group in self.parameters:
-            for param_values in group['parameters']:
-                # The mean of relative deviations is zero, but we store zeros for consistency
-                mean_values.append(0.0)
-        self.mean_vector = np.array(mean_values)
 
     def remove_zero_variance_parameters(self):
         """
@@ -675,6 +678,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         self.covariance_matrix = self.covariance_matrix[np.ix_(non_zero_indices, non_zero_indices)]
         
         print(f"Filtered covariance matrix size: {self.covariance_matrix.shape}")
+
 
     def _build_index_mapping(self):
         """
@@ -717,6 +721,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         print(f"Built index_mapping with {len(self.index_mapping)} parameters")
         print(f"Parameter constraints: {len(self.parameter_constraints)} constraints defined")
 
+
     def get_nominal_parameters(self):
         """
         Extracts the nominal parameters for parameters that have non-zero variance.
@@ -743,6 +748,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                 nominal_values[i] = resonance.GFB[0]
         
         return nominal_values
+
 
     def write_to_hdf5(self, hdf5_group):
         """
