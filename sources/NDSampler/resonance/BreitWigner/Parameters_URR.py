@@ -292,6 +292,9 @@ class URREnergyDependentJValue:
         GF = []
         GX = []
         
+        # Sort resonances by increasing resonance energy (ER)
+        self.RP.sort(key=lambda r: r.ES)
+        
         for rp in self.RP:
             energies.append(rp.ES)
             # For each parameter, use the sampled value if available, otherwise use the original
