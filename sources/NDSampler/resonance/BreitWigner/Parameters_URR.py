@@ -268,6 +268,8 @@ class URREnergyDependentJValue:
             RP_value_group = RP_group[RP_key]
             rp = URREnergyDependentRP.read_from_hdf5(RP_value_group)
             RP_list.append(rp)
+        # Sort resonances by increasing resonance energy (ER)
+        RP_list.sort(key=lambda r: r.ES)
         instance.RP = RP_list
 
         return instance
