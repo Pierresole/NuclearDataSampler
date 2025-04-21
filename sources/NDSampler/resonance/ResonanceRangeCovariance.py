@@ -177,6 +177,7 @@ class ResonanceRangeCovariance(CovarianceBase, ABC):
             el = resonance_ranges[self.NER].EL,
             eh = resonance_ranges[self.NER].EH,
             naps = resonance_ranges[self.NER].NAPS,
+            scattering_radius = resonance_ranges[self.NER].scattering_radius,
             parameters = updated_parameters
         )
         
@@ -202,59 +203,59 @@ class ResonanceRangeCovariance(CovarianceBase, ABC):
         mat_num = tape.material_numbers[0]
         tape.MAT(mat_num).MF(2).insert_or_replace(new_section)
         
-    def update_resonance_range(self, tape, sample_index=1):
-        """
-        Updates the resonance ranges in the tape with the sampled parameters for the given sample index.
+    # def update_resonance_range(self, tape, sample_index=1):
+    #     """
+    #     Updates the resonance ranges in the tape with the sampled parameters for the given sample index.
 
-        Parameters:
-        - tape: The ENDF tape object to update.
-        - sample_index: The index of the sample to use for updating the parameters.
-        """
-        # Parse the tape
-        mat_num = tape.material_numbers[0]
-        mf2mt151 = tape.MAT(mat_num).MF(2).MT(151).parse()
-        isotope = mf2mt151.isotopes[0]
-        resonance_ranges = isotope.resonance_ranges.to_list()
+    #     Parameters:
+    #     - tape: The ENDF tape object to update.
+    #     - sample_index: The index of the sample to use for updating the parameters.
+    #     """
+    #     # Parse the tape
+    #     mat_num = tape.material_numbers[0]
+    #     mf2mt151 = tape.MAT(mat_num).MF(2).MT(151).parse()
+    #     isotope = mf2mt151.isotopes[0]
+    #     resonance_ranges = isotope.resonance_ranges.to_list()
 
-        # Validate NER
-        if self.NER >= len(resonance_ranges):
-            raise IndexError(f"NER {self.NER} is out of bounds for the resonance ranges.")
+    #     # Validate NER
+    #     if self.NER >= len(resonance_ranges):
+    #         raise IndexError(f"NER {self.NER} is out of bounds for the resonance ranges.")
 
-        # Update the resonance range with matching NER
-        updated_ranges = []
-        for idx, rr in enumerate(resonance_ranges):
-            if idx == self.NER:
-                # Obtain updated parameters for the sample index
-                updated_parameters = self.update_resonance_parameters(sample_index)
-                # Create a new resonance range with the updated parameters
-                updated_rr = ENDFtk.MF2.MT151.ResonanceRange(
-                    EL=rr.EL,
-                    EH=rr.EH,
-                    LRU=rr.LRU,
-                    LRF=rr.LRF,
-                    LFW=rr.LFW,
-                    parameters=updated_parameters
-                )
-                updated_ranges.append(updated_rr)
-            else:
-                updated_ranges.append(rr)
+    #     # Update the resonance range with matching NER
+    #     updated_ranges = []
+    #     for idx, rr in enumerate(resonance_ranges):
+    #         if idx == self.NER:
+    #             # Obtain updated parameters for the sample index
+    #             updated_parameters = self.update_resonance_parameters(sample_index)
+    #             # Create a new resonance range with the updated parameters
+    #             updated_rr = ENDFtk.MF2.MT151.ResonanceRange(
+    #                 EL=rr.EL,
+    #                 EH=rr.EH,
+    #                 LRU=rr.LRU,
+    #                 LRF=rr.LRF,
+    #                 LFW=rr.LFW,
+    #                 parameters=updated_parameters
+    #             )
+    #             updated_ranges.append(updated_rr)
+    #         else:
+    #             updated_ranges.append(rr)
 
-        # Reconstruct the isotope and section
-        new_isotope = ENDFtk.MF2.MT151.Isotope(
-            zai=isotope.ZAI,
-            abn=isotope.ABN,
-            lfw=isotope.LFW,
-            ranges=updated_ranges
-        )
+    #     # Reconstruct the isotope and section
+    #     new_isotope = ENDFtk.MF2.MT151.Isotope(
+    #         zai=isotope.ZAI,
+    #         abn=isotope.ABN,
+    #         lfw=isotope.LFW,
+    #         ranges=updated_ranges
+    #     )
 
-        new_section = ENDFtk.MF2.MT151.Section(
-            zaid=mf2mt151.ZA,
-            awr=mf2mt151.AWR,
-            isotopes=[new_isotope]
-        )
+    #     new_section = ENDFtk.MF2.MT151.Section(
+    #         zaid=mf2mt151.ZA,
+    #         awr=mf2mt151.AWR,
+    #         isotopes=[new_isotope]
+    #     )
 
-        # Replace the existing section in the tape
-        tape.MAT(mat_num).MF(2).insert_or_replace(new_section)
+    #     # Replace the existing section in the tape
+    #     tape.MAT(mat_num).MF(2).insert_or_replace(new_section)
 
 
     @staticmethod
