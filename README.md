@@ -1,9 +1,48 @@
 # NuclearDataSampler
 
-Welcome to **NuclearDataSampler**, a Python-based code aiming to randomly sample evaluated nuclear data files (ENDF) under well-defined, minimal assumptions. This project is part of an effort to explore and compare different approaches to uncertainty quantification (UQ) in nuclear data, including classic sensitivity-based methods and the more direct “Total Monte Carlo” (TMC) approach. 
+*NuclearDataSampler**, a Python-based code aiming to randomly sample evaluated nuclear data files (ENDF). This project is part of an effort to explore and compare different approaches to uncertainty quantification (UQ) in nuclear data, including classic sensitivity-based methods and the more direct “Total Monte Carlo” (TMC) approach. 
+
 This project was made possible by the efficient handling of nuclear data files using ENDFtk and its C++/Python bindings.
 
----
+## :peanuts: In a Nutshell
+
+NuclearDataSampler is designed with simplicity in mind. Here's how you can use it in just a few lines of code:
+
+```python
+from NDSampler import NDSampler, SamplerSettings, generate_covariance_dict
+
+# Load your ENDF file
+endf_tape = Tape.from_file('pendl/n-010_Ne_021.endf')
+
+# Generate covariance dictionary from the file
+covariance_dict = generate_covariance_dict(endf_tape)
+# The covariance_dict structure looks like:
+# {33: {1: [1],
+#       2: [2, 4],
+#       4: [4],
+#       102: [102]},
+#  34: {2: {2: {1: [1, 2, 3, 4, 5, 6],
+#             2: [2, 3, 4, 5, 6],
+#             3: [3, 4, 5, 6],
+#             4: [4, 5, 6],
+#             5: [5, 6],
+#             6: [6]}}}
+# }
+
+# You can selectively choose which parameters to perturb
+del covariance_dict[33]  # Remove MF33 from perturbation
+
+# Configure sampling settings (e.g., Latin Hypercube Sampling)
+samplerSettings = SamplerSettings(sampling='LHS')
+
+# Initialize the sampler
+sampler = NDSampler(endf_tape, covariance_dict=covariance_dict, settings=samplerSettings)
+
+# Generate multiple samples
+sampler.sample(num_samples=5)  # Creates 'sampled_tape_1.endf', 'sampled_tape_2.endf', etc.
+```
+
+With just these few lines, you can generate multiple perturbed ENDF files for your uncertainty quantification studies.
 
 ## :one: Dependencies and Installation
 
