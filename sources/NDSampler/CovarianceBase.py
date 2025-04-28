@@ -146,6 +146,7 @@ class CovarianceBase(ABC):
     def update_tape(self):
         pass
 
+
     def calculate_adjusted_mean(self, nominal_mean, a, b=10.0):
         """
         Calculate the adjusted mean for a truncated normal distribution to ensure
