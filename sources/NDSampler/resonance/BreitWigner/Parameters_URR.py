@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional, Dict
+import ENDFtk
 import numpy as np
 
 from ENDFtk.MF2.MT151 import (
@@ -16,6 +17,74 @@ class URREnergyDependentRP:
     GG: List[float] = field(default_factory=list)  # Can be sampled
     GF: List[float] = field(default_factory=list)  # Can be sampled
     GX: List[float] = field(default_factory=list)  # Can be sampled
+    
+    # Uncertainty information
+    DD: float = None
+    DGN: float = None
+    DGG: float = None
+    DGF: float = None
+    DGX: float = None
+    
+    # Constraints information 
+    constraints: Dict[str, Dict] = field(default_factory=dict)
+    
+    @classmethod
+    def from_endftk(cls, ES: float, D: float, GN: float, GG: float, GF: Optional[float] = None, GX: Optional[float] = None, rel_variances=None):
+        """
+        Build a URREnergyDependentRP from ENDFtk resonance parameters.
+        
+        Parameters:
+        -----------
+        ES : float
+            Energy value
+        D : float
+            Average level spacing
+        GN : float
+            Neutron width
+        GG : float
+            Gamma width
+        GF : float, optional
+            Fission width
+        GX : float, optional
+            Competitive width
+        rel_variances : list, optional
+            Relative variances for parameters [D, GN, GG, GF, GX]
+        """
+        instance = cls(ES=ES)
+        instance.D = [D] if D is not None else []
+        instance.GN = [GN] if GN is not None else []
+        instance.GG = [GG] if GG is not None else []
+        instance.GF = [GF] if GF is not None else []
+        instance.GX = [GX] if GX is not None else []
+        
+        # Set uncertainties if rel_variances is provided
+        if rel_variances is not None:
+            # Get parameter values
+            params = [
+                ('D', D, 'DD'),
+                ('GN', GN, 'DGN'),
+                ('GG', GG, 'DGG'),
+                ('GF', GF, 'DGF'),
+                ('GX', GX, 'DGX')  # Special case for GX -> DGX
+            ]
+            
+            # Set uncertainty for each parameter
+            for i, (param_name, value, uncertainty_attr) in enumerate(params):
+                if i < len(rel_variances) and value is not None and rel_variances[i] > 0:
+                    # Calculate absolute uncertainty (std dev = sqrt(variance) * |nominal|)
+                    abs_uncertainty = np.sqrt(rel_variances[i]) * abs(value)
+                    setattr(instance, uncertainty_attr, abs_uncertainty)
+        
+        # Add constraints for each parameter
+        instance.constraints = {
+            'D': {'positive': True},    # Level spacing must be positive
+            'GN': {'positive': True},   # Neutron width must be positive
+            'GG': {'positive': True},   # Gamma width must be positive
+            'GF': {'positive': True},   # Fission width must be positive
+            'GX': {'positive': True}    # Competitive width must be positive
+        }
+        
+        return instance
 
     def write_to_hdf5(self, hdf5_group):
         """
@@ -39,6 +108,26 @@ class URREnergyDependentRP:
             hdf5_group.create_dataset('GX', data=np.array(self.GX))
         else:
             hdf5_group.attrs['GX_empty'] = True
+            
+        # Write uncertainty information if available
+        if self.DD is not None:
+            hdf5_group.attrs['DD'] = self.DD
+        if self.DGN is not None:
+            hdf5_group.attrs['DGN'] = self.DGN
+        if self.DGG is not None:
+            hdf5_group.attrs['DGG'] = self.DGG
+        if self.DGF is not None:
+            hdf5_group.attrs['DGF'] = self.DGF
+        if self.DGX is not None:
+            hdf5_group.attrs['DGX'] = self.DGX
+            
+        # Write constraints information
+        if self.constraints:
+            constraints_group = hdf5_group.create_group('constraints')
+            for param_name, constraint_dict in self.constraints.items():
+                param_group = constraints_group.create_group(param_name)
+                for constraint_key, constraint_value in constraint_dict.items():
+                    param_group.attrs[constraint_key] = constraint_value
 
     @classmethod
     def read_from_hdf5(cls, hdf5_group):
@@ -64,6 +153,28 @@ class URREnergyDependentRP:
             GX = []
 
         instance = cls(ES=ES, D=D, GN=GN, GG=GG, GF=GF, GX=GX)
+        
+        # Read uncertainty information if available
+        if 'DD' in hdf5_group.attrs:
+            instance.DD = hdf5_group.attrs['DD']
+        if 'DGN' in hdf5_group.attrs:
+            instance.DGN = hdf5_group.attrs['DGN']
+        if 'DGG' in hdf5_group.attrs:
+            instance.DGG = hdf5_group.attrs['DGG']
+        if 'DGF' in hdf5_group.attrs:
+            instance.DGF = hdf5_group.attrs['DGF']
+        if 'DGX' in hdf5_group.attrs:
+            instance.DGX = hdf5_group.attrs['DGX']
+            
+        # Read constraints if available
+        if 'constraints' in hdf5_group:
+            constraints_group = hdf5_group['constraints']
+            for param_name in constraints_group:
+                param_group = constraints_group[param_name]
+                constraint_dict = {}
+                for key in param_group.attrs:
+                    constraint_dict[key] = param_group.attrs[key]
+                instance.constraints[param_name] = constraint_dict
 
         return instance
 
@@ -76,6 +187,47 @@ class URREnergyDependentJValue:
     AMUX: int
     INT: int
     RP: List[URREnergyDependentRP] = field(default_factory=list)
+    
+    @classmethod
+    def from_endftk(cls, j_value, rel_variances=None):
+        """
+        Build a URREnergyDependentJValue from an ENDFtk UnresolvedEnergyDependentJValue object.
+        
+        Parameters:
+        -----------
+        j_value : UnresolvedEnergyDependentJValue
+            ENDFtk object containing J value parameters
+        rel_variances : list, optional
+            List of relative variances for parameters
+            
+        Returns:
+        --------
+        URREnergyDependentJValue instance
+        """
+        instance = cls(
+            AJ=j_value.AJ,
+            AMUN=j_value.AMUN,
+            AMUG=j_value.AMUG,
+            AMUF=j_value.AMUF,
+            AMUX=j_value.AMUX,
+            INT=j_value.INT
+        )
+        
+        # Extract energy-dependent parameters
+        energies = j_value.ES
+        for idx, energy in enumerate(energies):
+            rp = URREnergyDependentRP.from_endftk(
+                ES=energy,
+                D=j_value.D[idx],
+                GN=j_value.GN[idx],
+                GG=j_value.GG[idx],
+                GF=j_value.GF[idx] if hasattr(j_value, 'GF') and j_value.GF is not None else None,
+                GX=j_value.GX[idx] if hasattr(j_value, 'GX') and j_value.GX is not None else None,
+                rel_variances=rel_variances
+            )
+            instance.RP.append(rp)
+            
+        return instance
 
     def write_to_hdf5(self, hdf5_group):
         """
@@ -112,19 +264,111 @@ class URREnergyDependentJValue:
         # Read RP
         RP_group = hdf5_group['RP']
         RP_list = []
-        for RP_key in RP_group:
+        for RP_key in sorted(RP_group.keys()):
             RP_value_group = RP_group[RP_key]
             rp = URREnergyDependentRP.read_from_hdf5(RP_value_group)
             RP_list.append(rp)
+        # Sort resonances by increasing resonance energy (ER)
+        RP_list.sort(key=lambda r: r.ES)
         instance.RP = RP_list
 
         return instance
+        
+    def reconstruct(self, sample_index=0):
+        """
+        Reconstructs an ENDFtk UnresolvedEnergyDependentJValue from this object.
+        
+        Parameters:
+        -----------
+        sample_index : int
+            Index of the sample to use (0 for original values)
+            
+        Returns:
+        --------
+        UnresolvedEnergyDependentJValue : ENDFtk object with sampled values
+        """
+        energies = []
+        D = []
+        GN = []
+        GG = []
+        GF = []
+        GX = []
+        
+        # Sort resonances by increasing resonance energy (ER)
+        self.RP.sort(key=lambda r: r.ES)
+        
+        for rp in self.RP:
+            energies.append(rp.ES)
+            # For each parameter, use the sampled value if available, otherwise use the original
+            D.append(rp.D[sample_index] if len(rp.D) > sample_index else rp.D[0])
+            GN.append(rp.GN[sample_index] if len(rp.GN) > sample_index else rp.GN[0])
+            GG.append(rp.GG[sample_index] if len(rp.GG) > sample_index else rp.GG[0])
+            
+            # Handle optional parameters
+            if rp.GF:
+                GF.append(rp.GF[sample_index] if len(rp.GF) > sample_index else rp.GF[0])
+            else:
+                GF.append(None)
+                
+            if rp.GX:
+                GX.append(rp.GX[sample_index] if len(rp.GX) > sample_index else rp.GX[0])
+            else:
+                GX.append(None)
+        
+        # Create ENDFtk UnresolvedEnergyDependentJValue
+        return UnresolvedEnergyDependentJValue(
+            spin=self.AJ,
+            amun=self.AMUN,
+            amug=self.AMUG,
+            amuf=self.AMUF,
+            amux=self.AMUX,
+            interpolation=self.INT,
+            energies=energies,
+            d=D,
+            gn=GN,
+            gg=GG,
+            gf=GF if any(gf is not None for gf in GF) else None,
+            gx=GX if any(gx is not None for gx in GX) else None
+        )
 
 @dataclass
 class URREnergyDependentLValue:
     AWRI: float
     L: int
     Jlist: List[URREnergyDependentJValue] = field(default_factory=list)
+    
+    @classmethod
+    def from_endftk(cls, l_value, rel_variances=None):
+        """
+        Build a URREnergyDependentLValue from an ENDFtk UnresolvedEnergyDependentLValue object.
+        
+        Parameters:
+        -----------
+        l_value : UnresolvedEnergyDependentLValue
+            ENDFtk object containing L value parameters
+        rel_variances : list, optional
+            List of relative variances for parameters for each J group
+            
+        Returns:
+        --------
+        URREnergyDependentLValue instance
+        """
+        instance = cls(
+            AWRI=l_value.AWRI,
+            L=l_value.L
+        )
+        
+        # Extract J values
+        j_values = l_value.j_values.to_list()
+        for j_idx, j_value in enumerate(j_values):
+            j_rel_variances = None
+            if rel_variances is not None and j_idx < len(rel_variances):
+                j_rel_variances = rel_variances[j_idx]
+                
+            urre_j_value = URREnergyDependentJValue.from_endftk(j_value, j_rel_variances)
+            instance.Jlist.append(urre_j_value)
+            
+        return instance
 
     def write_to_hdf5(self, hdf5_group):
         """
@@ -153,13 +397,36 @@ class URREnergyDependentLValue:
         # Read Jlist
         Jlist_group = hdf5_group['J_values']
         Jlist = []
-        for J_key in Jlist_group:
+        for J_key in sorted(Jlist_group.keys()):
             J_value_group = Jlist_group[J_key]
             j_value = URREnergyDependentJValue.read_from_hdf5(J_value_group)
             Jlist.append(j_value)
         instance.Jlist = Jlist
 
         return instance
+        
+    def reconstruct(self, sample_index=0):
+        """
+        Reconstructs an ENDFtk UnresolvedEnergyDependentLValue from this object.
+        
+        Parameters:
+        -----------
+        sample_index : int
+            Index of the sample to use (0 for original values)
+            
+        Returns:
+        --------
+        UnresolvedEnergyDependentLValue : ENDFtk object with sampled values
+        """
+        # Reconstruct each J value
+        j_values = [j_value.reconstruct(sample_index) for j_value in self.Jlist]
+        
+        # Create ENDFtk UnresolvedEnergyDependentLValue
+        return UnresolvedEnergyDependentLValue(
+            awri=self.AWRI,
+            l=self.L,
+            jvalues=j_values
+        )
 
 @dataclass
 class URREnergyDependent:
@@ -167,6 +434,73 @@ class URREnergyDependent:
     AP: float   # Scattering radius
     LSSF: int   # Flag if Self-Shielding Factor
     Llist: List[URREnergyDependentLValue] = field(default_factory=list)
+    
+    @classmethod
+    def from_endftk(cls, mf2_range: ENDFtk.MF2.MT151.ResonanceRange, mf32_range: ENDFtk.MF32.MT151.ResonanceRange = None):
+        """
+        Create a URREnergyDependent object from ENDFtk ResonanceRange.
+        
+        Parameters:
+        -----------
+        mf2_range : ENDFtk.MF2.MT151.ResonanceRange
+            ENDFtk ResonanceRange object containing unresolved resonance parameters
+            
+        mf32_range : ENDFtk.MF32.MT151.ResonanceRange, optional
+            ENDFtk ResonanceRange object containing covariance matrix information
+            
+        Returns:
+        --------
+        URREnergyDependent instance
+        """
+        instance = cls(
+            SPI=mf2_range.parameters.SPI,
+            AP=mf2_range.parameters.AP,
+            LSSF=mf2_range.parameters.LSSF
+        )
+        
+        # Extract relative covariance matrix if provided
+        rel_covariance_matrix = None
+        if mf32_range is not None:
+            # Process covariance matrix
+            MPAR = mf32_range.parameters.covariance_matrix.MPAR  # Number of parameters per (L,J)
+            NPAR_spin = mf32_range.parameters.covariance_matrix.NPAR  # Total number of parameters
+            relative_cov_matrix_upper = mf32_range.parameters.covariance_matrix.covariance_matrix
+            
+            # Reconstruct full covariance matrix from upper triangular
+            rel_covariance_matrix = np.zeros((NPAR_spin, NPAR_spin))
+            triu_indices = np.triu_indices(NPAR_spin)
+            rel_covariance_matrix[triu_indices] = relative_cov_matrix_upper
+            rel_covariance_matrix = rel_covariance_matrix + rel_covariance_matrix.T - np.diag(np.diag(rel_covariance_matrix))
+            
+            # Get the diagonal elements (variances)
+            rel_variances = np.diag(rel_covariance_matrix)
+        else:
+            MPAR = 0
+            rel_variances = None
+        
+        # Organize relative variances by L-value and J-value before passing to L-values
+        l_rel_variances = []
+        if rel_variances is not None:
+            start_idx = 0
+            for l_idx, l_value in enumerate(mf2_range.parameters.l_values.to_list()):
+                j_rel_variances = []
+                j_values = l_value.j_values.to_list()
+                
+                for j_idx, j_value in enumerate(j_values):
+                    # Extract the variances for this (L,J) group
+                    param_rel_variances = rel_variances[start_idx:start_idx + MPAR]
+                    j_rel_variances.append(param_rel_variances)
+                    start_idx += MPAR
+                
+                l_rel_variances.append(j_rel_variances)
+        
+        # Extract L values with their associated relative variances
+        for l_idx, l_value in enumerate(mf2_range.parameters.l_values.to_list()):
+            l_variance_data = l_rel_variances[l_idx] if l_rel_variances else None
+            urre_l_value = URREnergyDependentLValue.from_endftk(l_value, l_variance_data)
+            instance.Llist.append(urre_l_value)
+            
+        return instance
 
     def write_to_hdf5(self, hdf5_group):
         """
@@ -201,149 +535,97 @@ class URREnergyDependent:
         # Read Llist
         Llist_group = hdf5_group['L_values']
         Llist = []
-        for L_key in Llist_group:
+        for L_key in sorted(Llist_group.keys()):
             L_value_group = Llist_group[L_key]
             l_value = URREnergyDependentLValue.read_from_hdf5(L_value_group)
             Llist.append(l_value)
         instance.Llist = Llist
 
         return instance
-
+        
     def extract_parameters(self, mf2_resonance_range):
         """
         Extracts the mean parameters from MF2 and constructs the URREnergyDependent object.
+        This is a legacy method - use from_endftk class method instead for new code.
         """
-        l_values = mf2_resonance_range.parameters.l_values.to_list()
-
-        self.L_values = []  # List to store (L, J) groups
-
-        for l_value in l_values:
-            L = l_value.L
-            awri = l_value.AWRI
-            j_values = l_value.j_values.to_list()
-            urre_l_value = URREnergyDependentLValue(
-                AWRI=awri,
-                L=L
-            )
-
-            for j_value in j_values:
-                J = j_value.AJ
-                urre_j_value = URREnergyDependentJValue(
-                    AJ=J,
-                    AMUN=j_value.AMUN,
-                    AMUG=j_value.AMUG,
-                    AMUF=j_value.AMUF,
-                    AMUX=j_value.AMUX,
-                    INT=j_value.INT
-                )
-
-                energies = j_value.ES
-                # For each energy, create URREnergyDependentRP
-                for idx, energy in enumerate(energies):
-                    rp = URREnergyDependentRP(
-                        ES=energy,
-                        D=[j_value.D[idx]],    # Initialize with original value
-                        GN=[j_value.GN[idx]],
-                        GG=[j_value.GG[idx]],
-                        GF=[j_value.GF[idx]] if hasattr(j_value, 'GF') else [],
-                        GX=[j_value.GX[idx]] if hasattr(j_value, 'GX') else []
-                    )
-                    urre_j_value.RP.append(rp)
-
-                urre_l_value.Jlist.append(urre_j_value)
-                self.L_values.append({'L': L, 'J': J})
-
-            self.Llist.append(urre_l_value)
+        # Use the class method for consistency
+        new_obj = self.from_endftk(mf2_resonance_range)
+        
+        # Copy attributes to self
+        self.SPI = new_obj.SPI
+        self.AP = new_obj.AP
+        self.LSSF = new_obj.LSSF
+        self.Llist = new_obj.Llist
+        self.L_values = []  # For backwards compatibility
+        
+        # Populate L_values for backwards compatibility
+        for l_value in self.Llist:
+            for j_value in l_value.Jlist:
+                self.L_values.append({'L': l_value.L, 'J': j_value.AJ})
+    
+    def reconstruct(self, sample_index=0):
+        """
+        Reconstructs an ENDFtk UnresolvedEnergyDependent object from this instance.
+        
+        Parameters:
+        -----------
+        sample_index : int
+            Index of the sample to use (0 for original values)
+            
+        Returns:
+        --------
+        UnresolvedEnergyDependent : ENDFtk object with sampled values
+        """
+        # Reconstruct each L value
+        l_values = [l_value.reconstruct(sample_index) for l_value in self.Llist]
+        
+        # Create ENDFtk UnresolvedEnergyDependent
+        return UnresolvedEnergyDependent(
+            spin=self.SPI,
+            ap=self.AP,
+            lssf=self.LSSF,
+            lvalues=l_values
+        )
     
     def update_resonance_parameters(self, sample_index=1):
         """
         Returns a new UnresolvedEnergyDependent object with the sampled parameters.
+        Legacy method - use reconstruct() instead for new code.
 
         Parameters:
         - sample_index: Index of the sample to use (default is 1, since index 0 is the original value).
         """
-        new_l_values = []
-
-        for l_value in self.Llist:
-            L = l_value.L
-            awri = l_value.AWRI
-            new_j_values = []
-
-            for j_value in l_value.Jlist:
-                J = j_value.AJ
-                amun = j_value.AMUN
-                amug = j_value.AMUG
-                amuf = j_value.AMUF
-                amux = j_value.AMUX
-                interpolation = j_value.INT
-
-                energies = []
-                D = []
-                GN = []
-                GG = []
-                GF = []
-                GX = []
-
-                for rp in j_value.RP:
-                    energies.append(rp.ES)
-                    # Fetch the sampled values using sample_index
-                    D.append(rp.D[sample_index])
-                    GN.append(rp.GN[sample_index])
-                    # Handle GG
-                    if len(rp.GG) > sample_index:
-                        GG.append(rp.GG[sample_index])
-                    else:
-                        GG.append(rp.GG[0])  # Use original value if not sampled
-                    # Handle GF
-                    if rp.GF:
-                        if len(rp.GF) > sample_index:
-                            GF.append(rp.GF[sample_index])
-                        else:
-                            GF.append(rp.GF[0])
-                    else:
-                        GF.append(None)
-                    # Handle GX
-                    if rp.GX:
-                        if len(rp.GX) > sample_index:
-                            GX.append(rp.GX[sample_index])
-                        else:
-                            GX.append(rp.GX[0])
-                    else:
-                        GX.append(None)
-
-                # Create new UnresolvedEnergyDependentJValue
-                new_j_value = UnresolvedEnergyDependentJValue(
-                    spin=J,
-                    amun=amun,
-                    amug=amug,
-                    amuf=amuf,
-                    amux=amux,
-                    interpolation=interpolation,
-                    energies=energies,
-                    d=D,
-                    gn=GN,
-                    gg=GG,
-                    gf=GF if any(gf is not None for gf in GF) else None,
-                    gx=GX if any(gx is not None for gx in GX) else None
-                )
-
-                new_j_values.append(new_j_value)
-
-            # Create new UnresolvedEnergyDependentLValue
-            new_l_value = UnresolvedEnergyDependentLValue(
-                awri=awri,
-                l=L,
-                jvalues=new_j_values
-            )
-
-            new_l_values.append(new_l_value)
-
-        # Create new UnresolvedEnergyDependent
-        parameters = UnresolvedEnergyDependent(
-            spin=self.SPI,
-            ap=self.AP,
-            lssf=self.LSSF,
-            lvalues=new_l_values
-        )
-
-        return parameters
+        # Use the new reconstruct method for consistency
+        return self.reconstruct(sample_index)
+    
+    def get_relative_uncertainty(self) -> List[float]:
+        """
+        Returns a list of nominal parameter values that have uncertainty information and are 
+        therefore included in the covariance matrix.
+        
+        Returns:
+        --------
+        List[float] : List of nominal parameter values for all resonances that have uncertainties
+        """
+        correlated_params = []
+        
+        # Loop through all L-groups
+        for l_group in self.Llist:
+            # Loop through all resonances in this L-group
+            for j_group in l_group.Jlist:
+                for resonance in j_group.RP:
+                
+                    # Add parameters with uncertainty information (non-None)
+                    params_with_uncertainty = [
+                        (resonance.D[0], resonance.DD),
+                        (resonance.GN[0] if resonance.GN is not None else None, resonance.DGN),
+                        (resonance.GG[0] if resonance.GG is not None else None, resonance.DGG),
+                        (resonance.GF[0] if resonance.GF is not None else None, resonance.DGF),
+                        (resonance.GX[0] if resonance.GX is not None else None, resonance.DGX)
+                    ]
+                    
+                    for value, uncertainty in params_with_uncertainty:
+                        if value is not None and uncertainty is not None and uncertainty > 0:
+                            correlated_params.append(value)
+        
+        return correlated_params

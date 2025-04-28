@@ -1,11 +1,12 @@
 import ENDFtk
 from ENDFtk.tree import Tape
-
+import bisect
 import numpy as np
-import h5py
 from abc import ABC, abstractmethod
+from typing import List
+from ..CovarianceBase import CovarianceBase
 
-class ResonanceRangeCovariance(ABC):
+class ResonanceRangeCovariance(CovarianceBase, ABC):
     def __init__(self, mf2_resonance_range, NER):
         """
         Base class for resonance covariance data.
@@ -14,45 +15,97 @@ class ResonanceRangeCovariance(ABC):
         - resonance_range: The resonance range object from MF32.
         - NER: Energy range index (integer).
         """
+        super().__init__()  # Initialize the CovarianceBase
         self.resonance_range = mf2_resonance_range
         self.NER = NER  # Energy range identifier
         self.LRF = mf2_resonance_range.LRF  # Resonance formalism flag
         self.LRU = mf2_resonance_range.LRU  # Resonance type (resolved or unresolved)
         self.resonance_parameters = mf2_resonance_range.parameters
-        self.covariance_matrix = None
         self.parameters = None
         self.AP = None  # Scattering radius
         self.DAP = None  # Scattering radius uncertainty
     
     @staticmethod
-    def fill_from_resonance_range(endf_tape : Tape, covariance_objects : list):
+    def fill_from_resonance_range(endf_tape: Tape, covariance_objects: list, ner_list=None, want_reduced: bool = False):
+        """
+        Fills the covariance_objects list with resonance range covariance objects.
+        
+        Parameters:
+        -----------
+        endf_tape : Tape
+            The ENDF tape object
+        covariance_objects : list
+            List to be filled with covariance objects
+        ner_list : list, optional
+            List of resonance range indices to process. If None, process all ranges.
+        want_reduced : bool, optional
+            Whether to use reduced widths
+        """
         mf2 = endf_tape.MAT(endf_tape.material_numbers[0]).MF(2).MT(151).parse()
         mf32 = endf_tape.MAT(endf_tape.material_numbers[0]).MF(32).MT(151).parse()
         
-        for NER, mf32_resonance_range in enumerate(mf32.isotopes[0].resonance_ranges.to_list()):
-            mf2_resonance_range = mf2.isotopes[0].resonance_ranges[NER]
+        mf2_ranges = mf2.isotopes[0].resonance_ranges.to_list()
+        mf32_ranges = mf32.isotopes[0].resonance_ranges.to_list()
+        
+        # Determine which NER values to process
+        if ner_list is None:
+            # Process all resonance ranges if no specific list is provided
+            indices_to_process = range(len(mf32_ranges))
+        else:
+            # Process only the specified NER values
+            indices_to_process = ner_list
+            
+        # Validate that all requested indices exist
+        if max(indices_to_process, default=-1) >= len(mf32_ranges):
+            raise IndexError(f"NER list contains indices that exceed the number of available resonance ranges: {len(mf32_ranges)}")
+        
+        print(f"Processing {len(indices_to_process)} resonance range(s) with NER values: {list(indices_to_process)}")
+        
+        for NER in indices_to_process:
+            if NER >= len(mf2_ranges) or NER >= len(mf32_ranges):
+                print(f"Warning: Skipping invalid NER={NER}, max MF2={len(mf2_ranges)-1}, max MF32={len(mf32_ranges)-1}")
+                continue
+                
+            mf2_resonance_range = mf2_ranges[NER]
+            mf32_resonance_range = mf32_ranges[NER]
+            
             LRU = mf2_resonance_range.LRU
             LRF = mf2_resonance_range.LRF
+            
+            print(f"Processing NER={NER} with LRU={LRU}, LRF={LRF}")
+            
+            # Create the appropriate covariance object based on LRU and LRF values
             if LRU == 1 and LRF == 2:
-                pass
-                # return MultiLevelBreitWignerCovariance(resonance_range, mf2_resonance_ranges, NER)
+                print(f"Multi-level Breit-Wigner formalism for NER={NER} not yet implemented")
+                # Import and create MLBW covariance object when implemented
+                
             elif LRU == 1 and LRF == 3:
-                pass
-                # from .RRR_RMUncertainty import RRRReichMooreUncertainty
-                # covariance_objects.append(RRRReichMooreUncertainty(mf2_resonance_range, mf32_resonance_range, NER))
-                # return RRRReichMooreUncertainty(mf2_resonance_range, mf32_resonance_range, NER)
+                print(f"Creating Reich-Moore covariance object for NER={NER}")
+                from .ReichMoore.Uncertainty_RM_RRR import Uncertainty_RM_RRR
+                covariance_objects.append(Uncertainty_RM_RRR(mf2_resonance_range, mf32_resonance_range, NER))
+                
             elif LRU == 1 and LRF == 7:
+                print(f"Creating R-Matrix Limited covariance object for NER={NER}")
                 from .RMatrixLimited.Uncertainty_RML_RRR import Uncertainty_RML_RRR
-                covariance_objects.append(Uncertainty_RML_RRR(mf2_resonance_range, mf32_resonance_range, NER))
-                # return RMatrixLimitedCovariance(resonance_range, mf2_resonance_ranges, NER)
-                pass
+                covariance_objects.append(Uncertainty_RML_RRR(mf2_resonance_range, mf32_resonance_range, NER, want_reduced))
+                
             elif LRU == 2 and LRF == 2:
+                print(f"Creating Unresolved Breit-Wigner covariance object for NER={NER}")
                 from .BreitWigner.Uncertainty_BW_URR import Uncertainty_BW_URR
                 covariance_objects.append(Uncertainty_BW_URR(mf2_resonance_range, mf32_resonance_range, NER))
-                # return URRBreitWignerUncertainty(mf2_resonance_range, mf32_resonance_range, NER)
+                
             else:
-                raise NotImplementedError(f"Resonance covariance format not supported LRU={LRU}, LRF={LRF}")
+                print(f"Warning: Resonance covariance format not supported for NER={NER} with LRU={LRU}, LRF={LRF}")
+                # No need to raise an exception here, just skip this range
+
+        print(f"Created {len(covariance_objects)} resonance covariance objects")
      
+
+    # def sample_parameters(self):
+    #     """ This method will be overridden by subclasses """
+    #     raise NotImplementedError("Subclasses must implement this method")
+
+    
     #-----------------
     # Matrix operator
     #-----------------
@@ -79,78 +132,13 @@ class ResonanceRangeCovariance(ABC):
         
         # Now, compute the covariance matrix
         self.covariance_matrix = np.outer(self.std_dev_vector, self.std_dev_vector) * correlation_matrix
+    
+    # Methods now inherited from CovarianceBase:
+    # - delete_parameters
+    # - remove_zero_variance_parameters
+    # - compute_L_matrix
+    # - write_to_hdf5
            
-    def delete_parameters(self, indices_to_delete):
-        """
-        Deletes parameters by indices and updates the covariance matrix and parameters list.
-
-        Parameters:
-        - indices_to_delete: List of indices of parameters to delete.
-        """
-        # Ensure indices are sorted in descending order to avoid index shifting issues
-        indices_to_delete = sorted(indices_to_delete, reverse=True)
-
-        # Delete rows and columns from the covariance matrix
-        self.covariance_matrix = np.delete(self.covariance_matrix, indices_to_delete, axis=0)
-        self.covariance_matrix = np.delete(self.covariance_matrix, indices_to_delete, axis=1)
-        
-        # Delete parameters from the list
-        for idx in indices_to_delete:
-            del self.parameters[idx]
-        
-        # Update indices in parameters
-        for idx, param in enumerate(self.parameters):
-            param['index'] = idx
-        
-        # Update mean vector and standard deviation vector
-        self.mean_vector = np.delete(self.mean_vector, indices_to_delete)
-        if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
-            self.std_dev_vector = np.delete(self.std_dev_vector, indices_to_delete)
-        
-        # Update NPAR
-        self.NPAR = self.covariance_matrix.shape[0]
-
-    def remove_zero_variance_parameters(self):
-        """
-        Removes parameters with zero variance and updates the covariance matrix accordingly.
-        """
-        # Identify parameters with non-zero standard deviation
-        if hasattr(self, 'std_dev_vector'):
-            non_zero_indices = np.where(self.std_dev_vector != 0.0)[0]
-        else:
-            non_zero_indices = np.where(np.diag(self.covariance_matrix) != 0.0)[0]
-
-        # Update parameters and vectors
-        self.parameters = [self.parameters[i] for i in non_zero_indices]
-        self.mean_vector = self.mean_vector[non_zero_indices]
-        if hasattr(self, 'std_dev_vector'):
-            self.std_dev_vector = self.std_dev_vector[non_zero_indices]
-        # Update the covariance matrix
-        self.covariance_matrix = self.covariance_matrix[np.ix_(non_zero_indices, non_zero_indices)]
-
-    @staticmethod
-    def compute_L_matrix(self):
-        """
-        Computes the decomposition of the covariance matrix and stores it as L_matrix.
-        """
-        try:
-            # Attempt Cholesky decomposition
-            self.L_matrix = np.linalg.cholesky(self.covariance_matrix)
-            self.is_cholesky = True  # Indicate that L_matrix is a Cholesky decomposition
-        except np.linalg.LinAlgError:
-            # Handle non-positive definite covariance matrix
-            # Use eigenvalue decomposition as a fallback
-            eigenvalues, eigenvectors = np.linalg.eigh(self.covariance_matrix)
-            # Ensure all eigenvalues are non-negative
-            eigenvalues[eigenvalues < 0] = 0
-            # Reconstruct L_matrix
-            self.L_matrix = eigenvectors @ np.diag(np.sqrt(eigenvalues))
-            self.is_cholesky = False  # Indicate that L_matrix is not a Cholesky decomposition
-
-    #-----------------
-    # Helper functions
-    #-----------------
-
     def _find_nearest_energy(self, energy_list, target_energy, tolerance=1e-5):
         """
         Finds the index of the energy in energy_list that matches target_energy within a tolerance.
@@ -172,27 +160,6 @@ class ResonanceRangeCovariance(ABC):
             return idx
         return None
         
-    # @classmethod
-    # def from_resonance_range(cls, resonance_range, mf2_resonance_ranges, NER):
-    #     LRU = resonance_range.LRU
-    #     LRF = resonance_range.LRF
-    #     # if LRU == 1 and LRF == 2:
-    #     #     from .RRR_RMUncertainty import RRRReichMooreUncertainty
-    #     #     from .MLBWUncertainty import MultiLevelBreitWignerCovariance
-    #     #     return MultiLevelBreitWignerCovariance(resonance_range, mf2_resonance_ranges, NER)
-    #     if LRU == 1 and LRF == 3:
-    #         from .RRR_RM_Uncertainty import ReichMooreCovariance
-    #         from .RRR_RM_Uncertainty import RRRReichMooreUncertainty
-    #         return ReichMooreCovariance(resonance_range, mf2_resonance_ranges, NER)
-    #     # elif LRU == 1 and LRF == 7:
-    #     #     from .RMatrixLimitedUncertainty import RMatrixLimitedCovariance
-    #     #     return RMatrixLimitedCovariance(resonance_range, mf2_resonance_ranges, NER)
-    #     elif LRU == 2 and LRF == 1:
-    #         from .URR_BW_Uncertainty import URRBreitWignerUncertainty
-    #         return URRBreitWignerUncertainty(resonance_range, mf2_resonance_ranges, NER)
-    #     else:
-    #         raise NotImplementedError("Resonance covariance format not supported")
-
     def _update_resonance_range(self, tape, updated_parameters : ENDFtk.MF2.MT151.ResonanceParameters):
         """
         Updates the resonance range in the tape with sampled parameters.
@@ -210,6 +177,7 @@ class ResonanceRangeCovariance(ABC):
             el = resonance_ranges[self.NER].EL,
             eh = resonance_ranges[self.NER].EH,
             naps = resonance_ranges[self.NER].NAPS,
+            scattering_radius = resonance_ranges[self.NER].scattering_radius,
             parameters = updated_parameters
         )
         
@@ -235,86 +203,72 @@ class ResonanceRangeCovariance(ABC):
         mat_num = tape.material_numbers[0]
         tape.MAT(mat_num).MF(2).insert_or_replace(new_section)
         
-    def update_resonance_range(self, tape, sample_index=1):
-        """
-        Updates the resonance ranges in the tape with the sampled parameters for the given sample index.
+    # def update_resonance_range(self, tape, sample_index=1):
+    #     """
+    #     Updates the resonance ranges in the tape with the sampled parameters for the given sample index.
 
-        Parameters:
-        - tape: The ENDF tape object to update.
-        - sample_index: The index of the sample to use for updating the parameters.
-        """
-        # Parse the tape
-        mat_num = tape.material_numbers[0]
-        mf2mt151 = tape.MAT(mat_num).MF(2).MT(151).parse()
-        isotope = mf2mt151.isotopes[0]
-        resonance_ranges = isotope.resonance_ranges.to_list()
+    #     Parameters:
+    #     - tape: The ENDF tape object to update.
+    #     - sample_index: The index of the sample to use for updating the parameters.
+    #     """
+    #     # Parse the tape
+    #     mat_num = tape.material_numbers[0]
+    #     mf2mt151 = tape.MAT(mat_num).MF(2).MT(151).parse()
+    #     isotope = mf2mt151.isotopes[0]
+    #     resonance_ranges = isotope.resonance_ranges.to_list()
 
-        # Validate NER
-        if self.NER >= len(resonance_ranges):
-            raise IndexError(f"NER {self.NER} is out of bounds for the resonance ranges.")
+    #     # Validate NER
+    #     if self.NER >= len(resonance_ranges):
+    #         raise IndexError(f"NER {self.NER} is out of bounds for the resonance ranges.")
 
-        # Update the resonance range with matching NER
-        updated_ranges = []
-        for idx, rr in enumerate(resonance_ranges):
-            if idx == self.NER:
-                # Obtain updated parameters for the sample index
-                updated_parameters = self.update_resonance_parameters(sample_index)
-                # Create a new resonance range with the updated parameters
-                updated_rr = ENDFtk.MF2.MT151.ResonanceRange(
-                    EL=rr.EL,
-                    EH=rr.EH,
-                    LRU=rr.LRU,
-                    LRF=rr.LRF,
-                    LFW=rr.LFW,
-                    parameters=updated_parameters
-                )
-                updated_ranges.append(updated_rr)
-            else:
-                updated_ranges.append(rr)
+    #     # Update the resonance range with matching NER
+    #     updated_ranges = []
+    #     for idx, rr in enumerate(resonance_ranges):
+    #         if idx == self.NER:
+    #             # Obtain updated parameters for the sample index
+    #             updated_parameters = self.update_resonance_parameters(sample_index)
+    #             # Create a new resonance range with the updated parameters
+    #             updated_rr = ENDFtk.MF2.MT151.ResonanceRange(
+    #                 EL=rr.EL,
+    #                 EH=rr.EH,
+    #                 LRU=rr.LRU,
+    #                 LRF=rr.LRF,
+    #                 LFW=rr.LFW,
+    #                 parameters=updated_parameters
+    #             )
+    #             updated_ranges.append(updated_rr)
+    #         else:
+    #             updated_ranges.append(rr)
 
-        # Reconstruct the isotope and section
-        new_isotope = ENDFtk.MF2.MT151.Isotope(
-            zai=isotope.ZAI,
-            abn=isotope.ABN,
-            lfw=isotope.LFW,
-            ranges=updated_ranges
-        )
+    #     # Reconstruct the isotope and section
+    #     new_isotope = ENDFtk.MF2.MT151.Isotope(
+    #         zai=isotope.ZAI,
+    #         abn=isotope.ABN,
+    #         lfw=isotope.LFW,
+    #         ranges=updated_ranges
+    #     )
 
-        new_section = ENDFtk.MF2.MT151.Section(
-            zaid=mf2mt151.ZA,
-            awr=mf2mt151.AWR,
-            isotopes=[new_isotope]
-        )
+    #     new_section = ENDFtk.MF2.MT151.Section(
+    #         zaid=mf2mt151.ZA,
+    #         awr=mf2mt151.AWR,
+    #         isotopes=[new_isotope]
+    #     )
 
-        # Replace the existing section in the tape
-        tape.MAT(mat_num).MF(2).insert_or_replace(new_section)
+    #     # Replace the existing section in the tape
+    #     tape.MAT(mat_num).MF(2).insert_or_replace(new_section)
 
-
-    def write_to_hdf5(self, hdf5_group):
-        """
-        Writes the covariance data to an HDF5 group.
-        """
-        # Write L_matrix
-        hdf5_group.create_dataset('L_matrix', data=self.L_matrix)
-        # Write mean_vector
-        if hasattr(self, 'mean_vector'):
-            hdf5_group.create_dataset('mean_vector', data=self.mean_vector)
-        # Write standard deviations if available
-        if hasattr(self, 'std_dev_vector'):
-            hdf5_group.create_dataset('std_dev_vector', data=self.std_dev_vector)
-        # Indicate if L_matrix is a Cholesky decomposition
-        hdf5_group.attrs['is_cholesky'] = self.is_cholesky
-        # Call the derived class method to write format-specific data
-        self.write_additional_data_to_hdf5(hdf5_group)
 
     @staticmethod
-    def read_hdf5_group(group, covariance_objects):
+    def read_hdf5_group(group, covariance_objects: List["CovarianceBase"]):
         for subgroup_name in group:
             subgroup = group[subgroup_name]
             
             if subgroup_name == 'URR_BreitWigner':
                 from .BreitWigner.Uncertainty_BW_URR import Uncertainty_BW_URR
                 covariance_obj = Uncertainty_BW_URR.read_from_hdf5(subgroup)
+            elif subgroup_name == 'Uncertainty_RM_RRR':
+                from .ReichMoore.Uncertainty_RM_RRR import Uncertainty_RM_RRR
+                covariance_obj = Uncertainty_RM_RRR.read_from_hdf5(subgroup)
             elif subgroup_name == 'Uncertainty_RML_RRR':
                 from .RMatrixLimited.Uncertainty_RML_RRR import Uncertainty_RML_RRR
                 covariance_obj = Uncertainty_RML_RRR.read_from_hdf5(subgroup)
@@ -323,9 +277,6 @@ class ResonanceRangeCovariance(ABC):
                 pass
             covariance_objects.append(covariance_obj)
         
-
-    def print_parameters(self):
-        """
-        Prints the parameters. This method should be implemented in subclasses.
-        """
-        raise NotImplementedError("Subclasses should implement this method.")
+    @abstractmethod
+    def update_tape(self):
+        pass

@@ -6,4 +6,7 @@ develop/
 *.hdf5
 *.pyc
 *.endf
+*.csv
+*.txt
+*.png
 sources/NuclearDataSampler.egg-info/
