@@ -56,7 +56,13 @@ class NDSampler:
                 mf_section = mat.MF(MF)
                 for MT, value_list in MT_dict.items():
                     if mf_section.has_MT(MT):
-                        if MF == 32:
+                        if MF == 31:
+                            from .multiplicity.MultiplicityCovariance import MultiplicityCovariance
+                            covariance_objects = []
+                            MultiplicityCovariance.fill_from_resonance_range(self.original_tape, covariance_objects)
+                            self.covariance_objects.extend(covariance_objects)
+                            self._add_covariance_to_hdf5(covariance_objects, "Multiplicity")
+                        elif MF == 32:
                             from .resonance.ResonanceRangeCovariance import ResonanceRangeCovariance
                             covariance_objects = []
                             
@@ -81,8 +87,9 @@ class NDSampler:
                             AngularDistributionCovariance.fill_from_resonance_range(self.original_tape, covariance_objects)
                             self.covariance_objects.extend(covariance_objects)
                             self._add_covariance_to_hdf5(covariance_objects, "AngularDist")
+                        else:
+                            # Handle other covariance types
                             pass
-                        # Handle other MFs similarly
         
     def _add_covariance_to_hdf5(self, covariance_objects, covariance_type_name):
         """
@@ -114,6 +121,12 @@ class NDSampler:
                 if group_name == 'ResonanceRange':
                     from .resonance.ResonanceRangeCovariance import ResonanceRangeCovariance
                     ResonanceRangeCovariance.read_hdf5_group(group, covariance_objects)
+                elif group_name == 'AngularDist':
+                    from .angular.AngularDistributionCovariance import AngularDistributionCovariance
+                    AngularDistributionCovariance.read_hdf5_group(group, covariance_objects)
+                elif group_name == 'Multiplicity':
+                    from .multiplicity.MultiplicityCovariance import MultiplicityCovariance
+                    MultiplicityCovariance.read_hdf5_group(group, covariance_objects)
                 else:
                     # Handle other covariance types
                     pass
