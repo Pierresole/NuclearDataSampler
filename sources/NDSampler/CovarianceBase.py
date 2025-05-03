@@ -52,44 +52,63 @@ class CovarianceBase(ABC):
             self.std_dev_vector = np.delete(self.std_dev_vector, indices_to_delete)
 
 
-    def remove_zero_variance_parameters(self):
-        """
-        Removes parameters with zero variance and updates the covariance matrix accordingly.
-        """
-        # Identify parameters with non-zero standard deviation
-        if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
-            non_zero_indices = np.where(self.std_dev_vector != 0.0)[0]
-        else:
-            non_zero_indices = np.where(np.diag(self.covariance_matrix) != 0.0)[0]
-
-        # Update parameters if they exist
-        if hasattr(self, 'parameters') and self.parameters is not None:
-            self.parameters = [self.parameters[i] for i in non_zero_indices]
+    # def remove_zero_variance_parameters(self):
+    #     """
+    #     Removes parameters with zero variance and updates the covariance matrix accordingly.
+    #     """
+    #     if self.covariance_matrix is None:
+    #         return
             
-        # Update vectors
-        if hasattr(self, 'mean_vector') and self.mean_vector is not None:
-            self.mean_vector = self.mean_vector[non_zero_indices]
-            
-        if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
-            self.std_dev_vector = self.std_dev_vector[non_zero_indices]
-            
-        # Update the covariance matrix
-        self.covariance_matrix = self.covariance_matrix[np.ix_(non_zero_indices, non_zero_indices)]
+    #     # Identify parameters with non-zero standard deviation
+    #     if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
+    #         non_zero_indices = np.where(self.std_dev_vector > 0)[0]
+    #     else:
+    #         non_zero_indices = np.where(np.diag(self.covariance_matrix) > 0)[0]
         
+    #     # If all parameters have non-zero variance, no need to filter
+    #     if len(non_zero_indices) == self.covariance_matrix.shape[0]:
+    #         return
+        
+    #     print(f"Removing {self.covariance_matrix.shape[0] - len(non_zero_indices)} parameters with zero variance")
+        
+    #     # Update parameters if they exist
+    #     if hasattr(self, 'parameters') and self.parameters is not None:
+    #         self.parameters = [self.parameters[i] for i in non_zero_indices]
+            
+    #     # Update vectors
+    #     if hasattr(self, 'mean_vector') and self.mean_vector is not None:
+    #         self.mean_vector = self.mean_vector[non_zero_indices]
+            
+    #     if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
+    #         self.std_dev_vector = self.std_dev_vector[non_zero_indices]
+            
+    #     # Update the covariance matrix
+    #     self.covariance_matrix = self.covariance_matrix[np.ix_(non_zero_indices, non_zero_indices)]
+        
+    #     # Update L_matrix if it exists
+    #     if hasattr(self, 'L_matrix') and self.L_matrix is not None:
+    #         # L_matrix needs to be recomputed with the updated covariance
+    #         self.compute_L_matrix()
+        
+    #     return non_zero_indices
             
     def compute_L_matrix(self, method='svd'):
-        
-        std_devs = np.sqrt(np.diag(self.covariance_matrix))
-        n_params = len(std_devs)
-        # Create correlation matrix
-        corr_matrix = np.zeros_like(self.covariance_matrix)
-        for i in range(n_params):
-            for j in range(n_params):
-                if std_devs[i] > 0 and std_devs[j] > 0:
-                    corr_matrix[i, j] = self.covariance_matrix[i, j] / (std_devs[i] * std_devs[j])
-                else:
-                    # Handle zero standard deviations - set correlation to 0
-                    corr_matrix[i, j] = 0.0 if i != j else 1.0
+        # Use self.correlation_matrix if it exists, otherwise compute from covariance_matrix
+        corr_matrix = self.correlation_matrix
+        # if hasattr(self, 'correlation_matrix') and self.correlation_matrix is not None:
+        #     corr_matrix = self.correlation_matrix
+        # else:
+        #     std_devs = np.sqrt(np.diag(self.covariance_matrix))
+        #     n_params = len(std_devs)
+        #     # Create correlation matrix
+        #     corr_matrix = np.zeros_like(self.covariance_matrix)
+        #     for i in range(n_params):
+        #         for j in range(n_params):
+        #             if std_devs[i] > 0 and std_devs[j] > 0:
+        #                 corr_matrix[i, j] = self.covariance_matrix[i, j] / (std_devs[i] * std_devs[j])
+        #             else:
+        #                 # Handle zero standard deviations - set correlation to 0
+        #                 corr_matrix[i, j] = 0.0 if i != j else 1.0
         try:
             if method == 'cholesky':
                 # Try Cholesky decomposition
@@ -112,12 +131,6 @@ class CovarianceBase(ABC):
             # Handle failure gracefully
             print("Decomposition failed using method:", method)
             raise
-        
-        # if debug:
-        #     print("Correlation matrix decomposition:")
-        #     print(f"Using Cholesky: {np.allclose(self.L_matrix @ self.L_matrix.T, corr_matrix)}")
-        #     if not np.allclose(self.L_matrix @ self.L_matrix.T, corr_matrix):
-        #         print("Using spectral decomposition instead")
 
 
     def write_to_hdf5(self, hdf5_group):
@@ -147,67 +160,102 @@ class CovarianceBase(ABC):
         pass
 
 
-    def calculate_adjusted_mean(self, nominal_mean, a, b=10.0):
-        """
-        Calculate the adjusted mean for a truncated normal distribution to ensure
-        that the truncated distribution has the desired nominal mean.
+    # def calculate_adjusted_mean(self, nominal_mean, a, b=10.0):
+    #     """
+    #     Calculate the adjusted mean for a truncated normal distribution to ensure
+    #     that the truncated distribution has the desired nominal mean.
         
-        Parameters:
-        -----------
-        nominal_mean : float
-            The desired mean for the truncated distribution
-        a : float
-            Lower bound in standard deviations
-        b : float
-            Upper bound in standard deviations (default: 10.0)
+    #     Parameters:
+    #     -----------
+    #     nominal_mean : float
+    #         The desired mean for the truncated distribution
+    #     a : float
+    #         Lower bound in standard deviations
+    #     b : float
+    #         Upper bound in standard deviations (default: 10.0)
             
-        Returns:
-        --------
-        float
-            The adjusted mean parameter (loc) to use in truncnorm
-        """
+    #     Returns:
+    #     --------
+    #     float
+    #         The adjusted mean parameter (loc) to use in truncnorm
+    #     """
+    #     from scipy.stats import norm
+    #     from scipy.optimize import root_scalar
+        
+    #     # For wide bounds (where truncation has minimal effect), return nominal mean
+    #     if a < -5 and b > 5:
+    #         return 0.0  # No adjustment needed for standard normal
+            
+    #     # Define the function that computes the mean of truncated normal
+    #     # with given mu (loc) parameter. We want this to equal nominal_mean.
+    #     def mean_difference(mu):
+    #         # Adjust bounds for the new mu
+    #         a_adj = a - mu
+    #         b_adj = b - mu
+            
+    #         # Calculate truncated mean for this mu
+    #         # Formula: mu + (pdf(a_adj) - pdf(b_adj))/(cdf(b_adj) - cdf(a_adj))
+    #         pdf_a = norm.pdf(a_adj)
+    #         pdf_b = norm.pdf(b_adj)
+    #         cdf_a = norm.cdf(a_adj)
+    #         cdf_b = norm.cdf(b_adj)
+            
+    #         # Avoid division by zero
+    #         if abs(cdf_b - cdf_a) < 1e-10:
+    #             return 0.0
+                
+    #         trunc_mean = mu + (pdf_a - pdf_b)/(cdf_b - cdf_a)
+            
+    #         # Return difference from desired mean
+    #         return trunc_mean - nominal_mean
+        
+    #     # Use root-finding to solve for mu
+    #     try:
+    #         result = root_scalar(mean_difference, bracket=[-5.0, 5.0], method='brentq')
+    #         if result.converged:
+    #             return result.root
+    #     except:
+    #         # If root-finding fails, use approximation
+    #         pass
+            
+    #     # Fallback approximation: shift mu in opposite direction of truncation effect
+    #     # For one-sided truncation (b is large), this works reasonably well
+    #     return -a/3.0 if a > -5 else 0.0
+    
+    def calculate_adjusted_mean(self, nominal_value, uncertainty):
         from scipy.stats import norm
         from scipy.optimize import root_scalar
-        
-        # For wide bounds (where truncation has minimal effect), return nominal mean
-        if a < -5 and b > 5:
-            return 0.0  # No adjustment needed for standard normal
-            
-        # Define the function that computes the mean of truncated normal
-        # with given mu (loc) parameter. We want this to equal nominal_mean.
-        def mean_difference(mu):
-            # Adjust bounds for the new mu
-            a_adj = a - mu
-            b_adj = b - mu
-            
-            # Calculate truncated mean for this mu
-            # Formula: mu + (pdf(a_adj) - pdf(b_adj))/(cdf(b_adj) - cdf(a_adj))
-            pdf_a = norm.pdf(a_adj)
-            pdf_b = norm.pdf(b_adj)
-            cdf_a = norm.cdf(a_adj)
-            cdf_b = norm.cdf(b_adj)
-            
-            # Avoid division by zero
-            if abs(cdf_b - cdf_a) < 1e-10:
-                return 0.0
-                
-            trunc_mean = mu + (pdf_a - pdf_b)/(cdf_b - cdf_a)
-            
-            # Return difference from desired mean
-            return trunc_mean - nominal_mean
-        
-        # Use root-finding to solve for mu
-        try:
-            result = root_scalar(mean_difference, bracket=[-5.0, 5.0], method='brentq')
-            if result.converged:
-                return result.root
-        except:
-            # If root-finding fails, use approximation
-            pass
-            
-        # Fallback approximation: shift mu in opposite direction of truncation effect
-        # For one-sided truncation (b is large), this works reasonably well
-        return -a/3.0 if a > -5 else 0.0
+        import numpy as np
+
+        # Function defining the difference from nominal mean
+        def mean_difference(mu_prime):
+            a_std = -mu_prime / uncertainty
+            pdf_a = norm.pdf(a_std)
+            cdf_a = norm.cdf(a_std)
+
+            if (1 - cdf_a) < 1e-10:
+                return mu_prime - nominal_value  # Avoid division by zero for large truncation
+
+            trunc_mean = mu_prime + uncertainty * pdf_a / (1 - cdf_a)
+            return trunc_mean - nominal_value
+
+        # Set appropriate bounds for root finding around nominal_value
+        bracket_low = nominal_value - 5 * uncertainty
+        bracket_high = nominal_value + 5 * uncertainty
+
+        # Solve the equation numerically
+        result = root_scalar(mean_difference, bracket=[bracket_low, bracket_high], method='brentq')
+
+        if result.converged:
+            adjusted_mu_prime = result.root
+            # Convert absolute adjusted_mu_prime back to standard units (loc)
+            loc = (adjusted_mu_prime - nominal_value) / uncertainty
+            return loc
+        else:
+            # Fallback: no adjustment
+            return 0.0
+
+
 
 
     def calculate_adjusted_sigma(self, nominal_sigma, a, b=10.0, adjusted_mean=0.0):
@@ -301,6 +349,7 @@ class CovarianceBase(ABC):
             raise ValueError("Decomposed covariance matrix is not initialized")
         
         n_params = self.L_matrix.shape[0]
+        print(n_params, "parameters in covariance matrix")
         
         # Generate all samples at once
         batch_size = num_samples

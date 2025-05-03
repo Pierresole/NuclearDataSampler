@@ -7,7 +7,7 @@ from ENDFtk import tree
 from ENDFtk.MF4 import ResonanceRange, Isotope, Section
 from scipy.linalg import block_diag  # Import block_diag function
 
-class Uncertainty_Angular(MultiplicityCovariance):
+class Uncertainty_Multiplicity(MultiplicityCovariance):
     """
     Class to handle the uncertainty in multiplicity angular distributions.
     """

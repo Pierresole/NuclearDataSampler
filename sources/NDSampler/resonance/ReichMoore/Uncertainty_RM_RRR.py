@@ -368,13 +368,15 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                                     # Adjust mean and standard deviation if needed
                                     if a > -10:  # Only adjust if truncation has significant effect
                                         # Calculate adjusted mean parameter for truncnorm
-                                        loc = self.calculate_adjusted_mean(0.0, a)
+                                        # loc = self.calculate_adjusted_mean(0.0, a)
                                         
                                         # Calculate adjusted standard deviation for truncnorm
-                                        scale = self.calculate_adjusted_sigma(1.0, a, 10.0, loc)
+                                        # scale = self.calculate_adjusted_sigma(1.0, a, 10.0, loc)
                                         
                                         # Use truncated normal with adjusted parameters
-                                        z_value = truncnorm.ppf(u_value, a - loc, 10.0 - loc, loc=loc, scale=scale)
+                                        # z_value = truncnorm.ppf(u_value, a - loc, 10.0 - loc, loc=loc, scale=scale)
+                                        z_value = truncnorm.ppf(u_value, a, np.inf, loc=0.0, scale=1.0)
+
                                         
                                         # Apply adjusted uncertainty
                                         sampled_value = nominal_value + z_value * uncertainty # / scale
@@ -549,11 +551,8 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                     print(" ".join([f"{x:.2f}" for x in row]))
                 
                 # Compare with original correlation matrix
-                if hasattr(self, 'covariance_matrix') and self.covariance_matrix is not None:
-                    # Convert covariance to correlation
-                    std_devs = np.sqrt(np.diag(self.covariance_matrix))
-                    std_dev_matrix = np.outer(std_devs, std_devs)
-                    orig_corr = self.covariance_matrix / std_dev_matrix
+                if hasattr(self, 'L_matrix') and self.L_matrix is not None:
+                    orig_corr = self.L_matrix @ self.L_matrix.T
                     
                     print("\nOriginal correlation matrix (first 5 parameters):")
                     orig_corr_display = orig_corr[:min(8, n_params), :min(8, n_params)]

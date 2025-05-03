@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 import ENDFtk
 import numpy as np
 
@@ -468,3 +468,32 @@ class ReichMooreData:
                 uncorr_params.append(l_group.APL[0])
         
         return uncorr_params
+
+    def get_nominal_parameters_with_uncertainty(self) -> Tuple[List[Tuple[int, int, int]], List[float]]:
+        """
+        Returns a tuple (index_mapping, nominal_values) for parameters with non-zero uncertainty.
+        - index_mapping: list of (l_group_idx, resonance_idx, param_type)
+          param_type: 0=ER, 1=GN, 2=GG, 3=GFA, 4=GFB
+        - nominal_values: list of corresponding nominal parameter values.
+        """
+        index_mapping = []
+        nominal_values = []
+
+        for l_group_idx, l_group in enumerate(self.LGroups):
+            for resonance_idx, resonance in enumerate(l_group.resonances):
+                # Parameter order: ER, GN, GG, GFA, GFB
+                param_info = [
+                    (resonance.ER, resonance.DER, 0),  # param_type 0 for ER
+                    (resonance.GN, resonance.DGN, 1),  # param_type 1 for GN
+                    (resonance.GG, resonance.DGG, 2),  # param_type 2 for GG
+                    (resonance.GFA, resonance.DGFA, 3),# param_type 3 for GFA
+                    (resonance.GFB, resonance.DGFB, 4) # param_type 4 for GFB
+                ]
+
+                for param_list, uncertainty, param_type in param_info:
+                    # Check if uncertainty exists and is non-zero, and param_list is valid
+                    if uncertainty is not None and uncertainty != 0 and param_list and len(param_list) > 0:
+                        index_mapping.append((l_group_idx, resonance_idx, param_type))
+                        nominal_values.append(param_list[0]) # Append the nominal value
+
+        return index_mapping, nominal_values

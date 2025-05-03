@@ -5,16 +5,16 @@ import h5py  # ensure h5py is available if not already
 
 @dataclass
 class Resonance:
-    """Class to store nominal and sampled resonance data."""
+    """Class to store nominal (1 energy and NCH widths) and sampled resonance data."""
     ER: List[float] = field(default_factory=list)   # First entry can be nominal, subsequent entries are samples
     GAM: List[List[float]] = field(default_factory=list)  # Same idea for widths
     DER: float = None
     DGAM: List[Optional[float]] = field(default_factory=lambda: [None])
-
-    def extract_parameters(self, parameters: ENDFtk.MF2.MT151.ResonanceParameters):
-        # Convert any ENDFtk views to mutable lists
-        self.ER = list(parameters.ER)
-        self.GAM = [list(g) for g in parameters.GAM]
+    FissionChannels: Optional[List[int]] = None  # List of fission channels
+    # def extract_parameters(self, parameters: ENDFtk.MF2.MT151.ResonanceParameters):
+    #     # Convert any ENDFtk views to mutable lists
+    #     self.ER = list(parameters.ER)
+    #     self.GAM = [list(g) for g in parameters.GAM]
 
     def reconstruct(self) -> ENDFtk.MF2.MT151.ResonanceParameters:
         # Combine all ER, GAM into a single ResonanceParameters object
@@ -28,6 +28,11 @@ class Resonance:
         gam_group = hdf5_group.create_group('GAM')
         for idx, gam_list in enumerate(self.GAM):
             gam_group.create_dataset(f'GAM_{idx}', data=gam_list)
+        # Store DER as an attribute (float or None)
+        hdf5_group.attrs['DER'] = self.DER if self.DER is not None else float('nan')
+        # Store DGAM as a dataset (list of floats or None)
+        dgam_data = [d if d is not None else float('nan') for d in self.DGAM]
+        hdf5_group.create_dataset('DGAM', data=dgam_data)
 
     @classmethod
     def read_from_hdf5(cls, hdf5_group):
@@ -38,10 +43,16 @@ class Resonance:
         gam_data = []
         for dataset in hdf5_group['GAM']:
             gam_data.append(list(hdf5_group['GAM'][dataset][()]))
-        return cls(ER=list(er_data), GAM=gam_data)
+        # Read DER, convert nan to None
+        der = hdf5_group.attrs.get('DER', float('nan'))
+        der = None if der != der else der  # nan check
+        # Read DGAM, convert nan to None
+        dgam_data = list(hdf5_group['DGAM'][()])
+        dgam = [None if (x != x) else x for x in dgam_data]  # nan to None
+        return cls(ER=list(er_data), GAM=gam_data, DER=der, DGAM=dgam)
 
     @classmethod
-    def from_endftk(cls, energy: float, denergy: float, widths: List[float], dwidths: List[Optional[float]]):
+    def from_endftk(cls, energy: float, denergy: float, widths: List[float], dwidths: List[Optional[float]], fisschannels: Optional[List[int]]):
         """
         Build a Resonance from ENDFtk resonance parameters.
         """
@@ -50,6 +61,7 @@ class Resonance:
         instance.DER = denergy
         instance.GAM = [[width] for width in widths]
         instance.DGAM = dwidths
+        instance.FissionChannels = fisschannels
         return instance
 
 
@@ -178,6 +190,50 @@ class SpinGroup:
     ResonanceParameters: List[Resonance] = field(default_factory=list)
     all_pairs: List[ParticlePair] = field(default_factory=list)
     
+    @classmethod
+    def from_endftk(cls, spingroup2: ENDFtk.MF2.MT151.SpinGroup, spingroup32 = None, want_reduced: bool = False,
+                    entrance_pair: Optional[ParticlePair] = None, all_pairs: Optional[List[ParticlePair]] = None):
+        """
+        Create SpinGroup from ENDFtk objects with optional reduced width conversion.
+        The entrance_pair is the particle pair with mt=2 by default (elastic).
+        """
+        instance = cls(
+            spin=spingroup2.channels.AJ,
+            parity=spingroup2.channels.PJ,
+            kbk=spingroup2.channels.KBK,
+            kps=spingroup2.channels.KPS,
+            channels=[Channel.from_endftk(spingroup2.channels, i) for i in range(spingroup2.NCH)], 
+            all_pairs=all_pairs if all_pairs else []
+        )
+        
+        # Fission channels may have negative widths, we want to keep this information
+        ppairs_fission = [i for i, pp in enumerate(instance.all_pairs) if pp.mt == 18]
+        index_fission_channels = [i for i, ch in enumerate(instance.channels) if ch.ppi in ppairs_fission]
+
+        if want_reduced and entrance_pair is not None:
+            resonances = []
+            for i in range(spingroup2.parameters.NRS):
+                energy = spingroup2.parameters.ER[i]
+                widths = []
+                widths_uncertainty = []
+                for ch_idx in range(spingroup2.NCH):
+                    reduced_width, reduced_width_uncertainty = instance._convert_to_reduced_width(spingroup2.parameters.GAM[i][ch_idx], spingroup32.parameters.DGAM[i][ch_idx], ch_idx, energy, entrance_pair)
+                    widths.append(reduced_width)
+                    # Pierre 30/04/25 - append reduced, and conversion matrix on correlation ok ?
+                    widths_uncertainty.append(reduced_width_uncertainty)
+                    # widths_uncertainty.append(spingroup32.parameters.DGAM[i][ch_idx])
+
+                resonances.append( Resonance.from_endftk(energy, spingroup32.parameters.DER[i], widths, widths_uncertainty) )
+        else:
+            resonances = [ Resonance.from_endftk(spingroup2.parameters.ER[i],
+                                                 spingroup32.parameters.DER[i],
+                                                 spingroup2.parameters.GAM[i][:spingroup2.NCH],
+                                                 spingroup32.parameters.DGAM[i][:spingroup2.NCH], 
+                                                 index_fission_channels ) for i in range(spingroup2.parameters.NRS) ]
+
+        instance.ResonanceParameters = resonances
+        return instance
+    
     def derivative_gamma_by_Gamma_in_Gamma0(self, resonance_idx: int, channel_idx: int, entrance_pair: ParticlePair) -> float:
         """
         Computes the derivative of gamma with respect to Gamma.
@@ -204,6 +260,7 @@ class SpinGroup:
         
         # return 1 / (2 * np.sqrt(2 * P * abs(Gamma0)))
         return 1 / ( 4 * P * gamma0 )
+
 
     def _convert_to_reduced_width(self, width: float, width_uncertainty: Optional[float], channel_idx: int, E_lab: float, entrance_pair: ParticlePair) -> Tuple[float, float]:
         """
@@ -238,43 +295,6 @@ class SpinGroup:
 
         return reduced_width, uncertainty
 
-    @classmethod
-    def from_endftk(cls, spingroup2: ENDFtk.MF2.MT151.SpinGroup, spingroup32 = None, want_reduced: bool = False,
-                    entrance_pair: Optional[ParticlePair] = None, all_pairs: Optional[List[ParticlePair]] = None):
-        """
-        Create SpinGroup from ENDFtk objects with optional reduced width conversion.
-        The entrance_pair is the particle pair with mt=2 by default (elastic).
-        """
-        instance = cls(
-            spin=spingroup2.channels.AJ,
-            parity=spingroup2.channels.PJ,
-            kbk=spingroup2.channels.KBK,
-            kps=spingroup2.channels.KPS,
-            channels=[Channel.from_endftk(spingroup2.channels, i) for i in range(spingroup2.NCH)], 
-            all_pairs=all_pairs if all_pairs else []
-        )
-
-        if want_reduced and entrance_pair is not None:
-            resonances = []
-            for i in range(spingroup2.parameters.NRS):
-                energy = spingroup2.parameters.ER[i]
-                widths = []
-                widths_uncertainty = []
-                for ch_idx in range(spingroup2.NCH):
-                    reduced_width, reduced_width_uncertainty = instance._convert_to_reduced_width(spingroup2.parameters.GAM[i][ch_idx], spingroup32.parameters.DGAM[i][ch_idx], ch_idx, energy, entrance_pair)
-                    widths.append(reduced_width)
-                    # widths_uncertainty.append(reduced_width_uncertainty)
-                    widths_uncertainty.append(spingroup32.parameters.DGAM[i][ch_idx])
-
-                resonances.append( Resonance.from_endftk(energy, spingroup32.parameters.DER[i], widths, widths_uncertainty) )
-        else:
-            resonances = [ Resonance.from_endftk(spingroup2.parameters.ER[i],
-                                                 spingroup32.parameters.DER[i],
-                                                 spingroup2.parameters.GAM[i][:spingroup2.NCH],
-                                                 spingroup32.parameters.DGAM[i][:spingroup2.NCH] ) for i in range(spingroup2.parameters.NRS) ]
-
-        instance.ResonanceParameters = resonances
-        return instance
 
     def reconstruct(self, sample_index: int = 0) -> ENDFtk.MF2.MT151.SpinGroup:
         """Reconstruct ENDFtk SpinGroup from this object"""
@@ -290,17 +310,18 @@ class SpinGroup:
             apt=[ch.apt for ch in self.channels],
             ape=[ch.ape for ch in self.channels]
         )
-
+        
         parameters = ENDFtk.MF2.MT151.ResonanceParameters(
-            energies=[res.ER[sample_index] for res in self.ResonanceParameters],
-            parameters=[[gam[sample_index] for gam in res.GAM] 
-                       for res in self.ResonanceParameters]
+            energies=[res.ER[sample_index] if len(res.ER) > 1 else res.ER[0] for res in self.ResonanceParameters],
+            parameters=[[gam[sample_index] if len(gam) > 1 else gam[0] for gam in res.GAM] 
+                   for res in self.ResonanceParameters]
         )
 
         return ENDFtk.MF2.MT151.SpinGroup(
             channels=channels,
             parameters=parameters
         )
+
 
     def channelPenetrationAndShift(self, E_lab: float, channel_index: int, entrance_pair: ParticlePair):
         """Compute penetration and shift using channel angular momentum"""
@@ -372,18 +393,6 @@ class SpinGroup:
             ResonanceParameters=resonances
         )
 
-    def getListStandardDeviation(self, spin_group_idx: int):
-        index_mapping = []
-        ListStandardDeviation = []
-        for r_idx, resonance in enumerate(self.ResonanceParameters):
-            if resonance.DER is not None:
-                ListStandardDeviation.append(resonance.DER)
-                index_mapping.append((spin_group_idx, r_idx, 0))
-            for p_idx, dgam in enumerate(resonance.DGAM):
-                if dgam is not None:
-                    ListStandardDeviation.append(dgam)
-                    index_mapping.append((spin_group_idx, r_idx, p_idx + 1))
-        return index_mapping, ListStandardDeviation
 
 
 
@@ -448,20 +457,20 @@ class RMatrixLimited:
             EntranceParticlePair=EntrancePair
         )
         
-    def extract_parameters(self, mf2_range: ENDFtk.MF2.MT151.ResonanceRange):
-        """
-        Extracts the mean parameters from MF2 and constructs the RMatrixLimited object.
-        """
-        self.IFG = mf2_range.parameters.IFG
-        self.KRL = mf2_range.parameters.KRL
-        self.KRM = mf2_range.parameters.KRM
+    # def extract_parameters(self, mf2_range: ENDFtk.MF2.MT151.ResonanceRange):
+    #     """
+    #     Extracts the mean parameters from MF2 and constructs the RMatrixLimited object.
+    #     """
+    #     self.IFG = mf2_range.parameters.IFG
+    #     self.KRL = mf2_range.parameters.KRL
+    #     self.KRM = mf2_range.parameters.KRM
         
-        self.ParticlePairs = ENDFtk.MF2.MT151.ParticlePairs(mf2_range.parameters.particle_pairs)
+    #     self.ParticlePairs = ENDFtk.MF2.MT151.ParticlePairs(mf2_range.parameters.particle_pairs)
         
-        for spingroup in mf2_range.parameters.spin_groups.to_list():
-            spin_group = SpinGroup(ResonanceChannels=ENDFtk.MF2.MT151.ResonanceChannels(spingroup.channels))
-            spin_group.extract_parameters(spingroup)
-            self.ListSpinGroup.append(spin_group)
+    #     for spingroup in mf2_range.parameters.spin_groups.to_list():
+    #         spin_group = SpinGroup(ResonanceChannels=ENDFtk.MF2.MT151.ResonanceChannels(spingroup.channels))
+    #         spin_group.extract_parameters(spingroup)
+    #         self.ListSpinGroup.append(spin_group)
             
     def reconstruct(self, sample_index: int = 0) -> ENDFtk.MF2.MT151.RMatrixLimited:
         
@@ -561,28 +570,64 @@ class RMatrixLimited:
                     parameters.append(gam[0])
         return parameters
 
-    def getListStandardDeviation(self) -> Tuple[List[Tuple[int, int, int]], List[float]]:
+    def get_standard_deviations(self, non_null_only: bool = False) -> Tuple[List[Tuple[int, int, int]], List[float]]:
+        """
+        Returns a tuple (index_mapping, std_devs) where:
+        - index_mapping: list of (spin_group_idx, resonance_idx, param_idx)
+        - std_devs: list of standard deviations (DER and DGAM)
+        If non_null_only is True, only non-None and non-zero values are included.
+        If False, all values are included, replacing None with 0.
+        """
         index_mapping = []
-        ListStandardDeviation = []
-        for j_idx, sg in enumerate(self.ListSpinGroup):
-            sg_index_map, sg_stddev = sg.getListStandardDeviation(j_idx)
-            index_mapping.extend(sg_index_map)
-            ListStandardDeviation.extend(sg_stddev)
-        return index_mapping, ListStandardDeviation
-
-    def get_non_none_std_devs(self) -> List[float]:
-        """
-        Returns a list of DER and DGAM values that are not None from all spin groups and resonances.
-        """
         std_devs = []
-        for sg in self.ListSpinGroup:
-            for res in sg.ResonanceParameters:
-                if res.DER is not None:
-                    std_devs.append(res.DER)
-                for ch_idx in range(len(res.GAM)):
-                    if ch_idx < len(res.DGAM) and res.DGAM[ch_idx] is not None:
-                        std_devs.append(res.DGAM[ch_idx])
-        return std_devs
+        for j_idx, sg in enumerate(self.ListSpinGroup):
+            for r_idx, resonance in enumerate(sg.ResonanceParameters):
+                # DER
+                der = resonance.DER
+                if non_null_only:
+                    if der is not None and der != 0:
+                        index_mapping.append((j_idx, r_idx, 0))
+                        std_devs.append(der)
+                else:
+                    index_mapping.append((j_idx, r_idx, 0))
+                    std_devs.append(der if der is not None else 0.0)
+                # DGAM
+                for p_idx, dgam in enumerate(resonance.DGAM):
+                    if non_null_only:
+                        if dgam is not None and dgam != 0:
+                            index_mapping.append((j_idx, r_idx, p_idx + 1))
+                            std_devs.append(dgam)
+                    else:
+                        index_mapping.append((j_idx, r_idx, p_idx + 1))
+                        std_devs.append(dgam if dgam is not None else 0.0)
+        return index_mapping, std_devs
+
+    def get_nominal_parameters_with_uncertainty(self) -> Tuple[List[Tuple[int, int, int]], List[float]]:
+        """
+        Returns a tuple (index_mapping, nominal_values) where:
+        - index_mapping: list of (spin_group_idx, resonance_idx, param_idx) for parameters with non-null/non-zero uncertainty.
+        - nominal_values: list of nominal parameter values (ER[0] or GAM[param_idx-1][0]) corresponding to the index_mapping.
+        """
+        index_mapping = []
+        nominal_values = []
+        for j_idx, sg in enumerate(self.ListSpinGroup):
+            for r_idx, resonance in enumerate(sg.ResonanceParameters):
+                # DER
+                if resonance.DER is not None and resonance.DER != 0:
+                    index_mapping.append((j_idx, r_idx, 0))
+                    nominal_values.append(resonance.ER[0])
+                # DGAM
+                for p_idx, dgam in enumerate(resonance.DGAM):
+                    if dgam is not None and dgam != 0:
+                        # Ensure the corresponding GAM exists before accessing
+                        if p_idx < len(resonance.GAM):
+                            index_mapping.append((j_idx, r_idx, p_idx + 1))
+                            nominal_values.append(resonance.GAM[p_idx][0])
+                        else:
+                            # This case might indicate an inconsistency in data structure
+                            print(f"Warning: DGAM index {p_idx} has uncertainty but no corresponding GAM in SG {j_idx}, Res {r_idx}.")
+
+        return index_mapping, nominal_values
 
     def get_jacobian_diagonal(self) -> List[float]:
         """
