@@ -25,7 +25,7 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         self.index_mapping = []
 
         start_time = time.time()
-        self.extract_covariance_matrix(mf32_resonance_range, want_reduced)
+        self.extract_correlation_matrix(mf32_resonance_range, want_reduced)
         print(f"Time for extract_covariance_matrix: {time.time() - start_time:.4f} seconds")
         
         # Filter out parameters with zero standard deviation before computing L_matrix
@@ -58,7 +58,8 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         """
         return "Uncertainty_RML_RRR"
     
-    def extract_covariance_matrix(self, mf32_range, to_reduced: bool = True):
+    
+    def extract_correlation_matrix(self, mf32_range, to_reduced: bool = True):
         """
         Extracts the correlation matrix using the method from the base class.
         Also sets the initial full index_mapping before filtering.
@@ -80,29 +81,22 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
             If True, converts widths to reduced form.
         """
         cm = mf32_range.parameters.correlation_matrix
-        NNN = cm.NNN  # Order of the correlation matrix
-        correlations = cm.correlations  # List of correlation coefficients
-        I = cm.I  # List of row indices (one-based)
-        J = cm.J  # List of column indices (one-based)
         
         NParams = sum( ((sgroup.NCH + 1 ) * sgroup.NRSA) for sgroup in mf32_range.parameters.uncertainties.spin_groups.to_list())
-        if NNN != NParams:
-            raise ValueError(f"Mismatch between number of parameters ({NParams}) and size of correlation matrix (NNN={NNN}).")
+        if cm.NNN != NParams:
+            raise ValueError(f"Mismatch between number of parameters ({NParams}) and size of correlation matrix (NNN={cm.NNN}). Not sure if it will work ... ?")
         
-        # Initialize the correlation matrix
-        correlation_matrix = np.identity(NParams)
-        
-        # Fill in the off-diagonal elements
-        for idx, corr_value in enumerate(correlations):
-            i = I[idx] - 1  # Convert to zero-based index
-            j = J[idx] - 1  # Convert to zero-based index
-            correlation_matrix[i, j] = corr_value
-            correlation_matrix[j, i] = corr_value  # Symmetric matrix
-        
-        # Now, compute the covariance matrix
-        # std_devs = self.rml_data.get_non_none_std_devs()
+        correlation_matrix = np.identity(cm.NNN)   
+             
+        I_arr = np.array(cm.I) - 1  # zero-based
+        J_arr = np.array(cm.J) - 1
+        corr_arr = np.array(cm.correlations)
 
-        # covariance_matrix = np.outer(std_devs, std_devs) * correlation_matrix
+        # Fill the upper triangle
+        correlation_matrix[I_arr, J_arr] = corr_arr
+        # Fill the lower triangle (since the matrix is symmetric)
+        correlation_matrix[J_arr, I_arr] = corr_arr
+        
         # Set the initial, unfiltered index mapping right after extraction
         index_mapping, std_devs = self.rml_data.get_standard_deviations()
         
@@ -111,28 +105,17 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         
         self.index_mapping = [index_mapping[i] for i in non_zero_indices]
                
-        # Convert to reduced covariance matrix if requested
+        # Convert to reduced covariance matrix if requested (multiply by Jacobian)
         if to_reduced:
             # covariance_matrix = self.rml_data.extract_covariance_matrix_LCOMP2(covariance_matrix)
             correlation_matrix = self.rml_data.extract_covariance_matrix_LCOMP2(correlation_matrix)
         
         # Set the covariance matrix and correlation matrix attributes
         # self.correlation_matrix = correlation_matrix
-                # Set the covariance matrix as an attribute of CovarianceBase
+        # Set the covariance matrix as an attribute of CovarianceBase
         # This ensures we're using the one from the parent class
         super().__setattr__('correlation_matrix', correlation_matrix)
-        # self.covariance_matrix = covariance_matrix
 
-    # def construct_mean_vector(self):
-    #     """
-    #     Constructs the mean vector from the mean parameters.
-    #     """
-    #     mean_values = []
-    #     for group in self.parameters:
-    #         for param_values in group['parameters']:
-    #             # The mean of relative deviations is zero, but we store zeros for consistency
-    #             mean_values.append(0.0)
-    #     self.mean_vector = np.array(mean_values)
 
     def update_tape(self, tape, sample_index=1, sample_name=""):
         """
@@ -147,6 +130,7 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         #     tape.to_file(f'sampled_tape_{sample_name}.endf')
         # else:
         #     tape.to_file(f'sampled_tape_{sample_index+1}.endf')
+
 
     def write_to_hdf5(self, hdf5_group):
         """
@@ -165,6 +149,7 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         # Write rml_data
         rml_data_group = hdf5_group.create_group('Parameters')
         self.rml_data.write_to_hdf5(rml_data_group)
+        
         
     @classmethod
     def read_from_hdf5(cls, hdf5_group):
@@ -200,6 +185,7 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
         instance.index_mapping = index_mapping
 
         return instance
+
 
     def _apply_samples(self, samples, mode="stack", use_copula=False, batch_size=1, sampling_method="Simple", debug=False):
         """
@@ -273,7 +259,7 @@ class Uncertainty_RML_RRR(ResonanceRangeCovariance):
                         if a > -10:  # Only adjust if truncation has significant effect
                             # Calculate adjusted mean and sigma for truncnorm
                             loc = self.calculate_adjusted_mean(nominal_value, uncertainty)
-                            scale = self.calculate_adjusted_sigma(1.0, a, 10.0, loc)
+                            # scale = self.calculate_adjusted_sigma(1.0, a, 10.0, loc)
                             
                             # Use truncated normal with adjusted parameters
                             z_value = truncnorm.ppf(u_value, a - loc, np.inf, loc=loc, scale=1.0)
