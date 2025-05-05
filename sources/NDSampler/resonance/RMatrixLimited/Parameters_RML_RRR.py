@@ -5,7 +5,7 @@ import h5py  # ensure h5py is available if not already
 
 @dataclass
 class Resonance:
-    """Class to store nominal (1 energy and NCH widths) and sampled resonance data."""
+    """Class to store nominal (1 energy and NCH widths) and sampled resonance data. To be clear : All MF2 is here."""
     ER: List[float] = field(default_factory=list)   # First entry can be nominal, subsequent entries are samples
     GAM: List[List[float]] = field(default_factory=list)  # Same idea for widths
     DER: float = None
@@ -456,21 +456,6 @@ class RMatrixLimited:
             ListParticlePairs=all_pairs,
             EntranceParticlePair=EntrancePair
         )
-        
-    # def extract_parameters(self, mf2_range: ENDFtk.MF2.MT151.ResonanceRange):
-    #     """
-    #     Extracts the mean parameters from MF2 and constructs the RMatrixLimited object.
-    #     """
-    #     self.IFG = mf2_range.parameters.IFG
-    #     self.KRL = mf2_range.parameters.KRL
-    #     self.KRM = mf2_range.parameters.KRM
-        
-    #     self.ParticlePairs = ENDFtk.MF2.MT151.ParticlePairs(mf2_range.parameters.particle_pairs)
-        
-    #     for spingroup in mf2_range.parameters.spin_groups.to_list():
-    #         spin_group = SpinGroup(ResonanceChannels=ENDFtk.MF2.MT151.ResonanceChannels(spingroup.channels))
-    #         spin_group.extract_parameters(spingroup)
-    #         self.ListSpinGroup.append(spin_group)
             
     def reconstruct(self, sample_index: int = 0) -> ENDFtk.MF2.MT151.RMatrixLimited:
         
