@@ -17,20 +17,19 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         # Initialize base attributes
         self.NER = NER
         
-        start_time = time.time()
-        self.extract_covariance_matrix(mf32_resonance_range) 
-        print(f"Time for extracting covariance matrix: {time.time() - start_time:.4f} seconds")
-
-        
         # Initialize data model with uncertainty information
         start_time = time.time()
         self.rm_data = ReichMooreData.from_endftk(mf2_resonance_ranges, mf32_resonance_range)
         print(f"Time for ReichMooreData.from_endftk: {time.time() - start_time:.4f} seconds")
         
-        # Remove zero variance parameters from the covariance matrix
         start_time = time.time()
-        self._filter_covariance_matrix()
-        print(f"Time for _filter_covariance_matrix: {time.time() - start_time:.4f} seconds")
+        self.extract_correlation_matrix(mf32_resonance_range) 
+        print(f"Time for extracting covariance matrix: {time.time() - start_time:.4f} seconds")
+        
+        # Remove zero variance parameters from the covariance matrix
+        # start_time = time.time()
+        # self._filter_covariance_matrix()
+        # print(f"Time for _filter_covariance_matrix: {time.time() - start_time:.4f} seconds")
 
         # Compute L matrix for sampling
         start_time = time.time()
@@ -45,38 +44,38 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         return "Uncertainty_RM_RRR"
         
 
-    def _filter_covariance_matrix(self):
-        """
-        Removes zero variance parameters from the covariance matrix and reports on removed parameters.
-        No explicit mapping is needed as filtering is handled when sampling.
-        """
-        if self.covariance_matrix is None:
-            return
+    # def _filter_covariance_matrix(self):
+    #     """
+    #     Removes zero variance parameters from the covariance matrix and reports on removed parameters.
+    #     No explicit mapping is needed as filtering is handled when sampling.
+    #     """
+    #     if self.covariance_matrix is None:
+    #         return
             
-        # Get the diagonal elements of the covariance matrix
-        variances = np.diag(self.covariance_matrix)
+    #     # Get the diagonal elements of the covariance matrix
+    #     variances = np.diag(self.covariance_matrix)
         
-        # Find indices where variance is not zero (use small threshold for numerical precision)
-        non_zero_indices = np.where(variances > 1e-15)[0]
-        zero_variance_indices = np.where(variances <= 1e-15)[0]
+    #     # Find indices where variance is not zero (use small threshold for numerical precision)
+    #     non_zero_indices = np.where(variances > 1e-15)[0]
+    #     zero_variance_indices = np.where(variances <= 1e-15)[0]
         
-        if len(zero_variance_indices) == 0:
-            # No parameters to remove
-            print("No zero variance parameters found, using full covariance matrix")
-            return
+    #     if len(zero_variance_indices) == 0:
+    #         # No parameters to remove
+    #         print("No zero variance parameters found, using full covariance matrix")
+    #         return
         
-        # Count parameters by type for reporting
-        original_size = self.covariance_matrix.shape[0]
-        filtered_size = len(non_zero_indices)
+    #     # Count parameters by type for reporting
+    #     original_size = self.covariance_matrix.shape[0]
+    #     filtered_size = len(non_zero_indices)
         
-        # Print diagnostics
-        print(f"Removed {original_size - filtered_size} parameters with zero variance")
-        print(f"Original covariance matrix size: {original_size}x{original_size}")
+    #     # Print diagnostics
+    #     print(f"Removed {original_size - filtered_size} parameters with zero variance")
+    #     print(f"Original covariance matrix size: {original_size}x{original_size}")
         
-        # Update the covariance matrix by removing zero variance rows and columns
-        self.covariance_matrix = self.covariance_matrix[np.ix_(non_zero_indices, non_zero_indices)]
+    #     # Update the covariance matrix by removing zero variance rows and columns
+    #     self.covariance_matrix = self.covariance_matrix[np.ix_(non_zero_indices, non_zero_indices)]
         
-        print(f"Filtered covariance matrix size: {filtered_size}x{filtered_size}")
+    #     print(f"Filtered covariance matrix size: {filtered_size}x{filtered_size}")
 
 
     def _perturb_radius_parameters(self, sample_list, operation_mode, use_copula, sampling_method, same_perturbation=False):
@@ -363,20 +362,19 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                                 if constraint_type == 'positive' and nominal_value > 0:
                                     # For positive parameters, use truncated normal
                                     # Calculate the lower bound in standard units to prevent negative values
+                                    # a = L - nominal_value / uncertainty, and here L = 0
                                     a = -nominal_value / uncertainty if uncertainty > 0 else -np.inf
                                     
                                     # Adjust mean and standard deviation if needed
                                     if a > -10:  # Only adjust if truncation has significant effect
                                         # Calculate adjusted mean parameter for truncnorm
-                                        # loc = self.calculate_adjusted_mean(0.0, a)
-                                        
+                                        loc = self.calculate_adjusted_mean(nominal_value, uncertainty)
+
                                         # Calculate adjusted standard deviation for truncnorm
                                         # scale = self.calculate_adjusted_sigma(1.0, a, 10.0, loc)
                                         
                                         # Use truncated normal with adjusted parameters
-                                        # z_value = truncnorm.ppf(u_value, a - loc, 10.0 - loc, loc=loc, scale=scale)
-                                        z_value = truncnorm.ppf(u_value, a, np.inf, loc=0.0, scale=1.0)
-
+                                        z_value = truncnorm.ppf(u_value, a - loc, np.inf, loc=loc, scale=1.0)
                                         
                                         # Apply adjusted uncertainty
                                         sampled_value = nominal_value + z_value * uncertainty # / scale
@@ -603,20 +601,19 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         self._update_resonance_range(tape, updated_parameters=self.rm_data.reconstruct(sample_index))
 
 
-    def extract_covariance_matrix(self, mf32_range):
+    def extract_correlation_matrix(self, mf32_range):
         """
         Extracts the covariance matrix using the method from the base class.
         """
         if mf32_range.parameters.LCOMP == 1:
-            self.extract_covariance_matrix_LCOMP1(mf32_range)
+            self.extract_correlation_matrix_LCOMP1(mf32_range)
+        if mf32_range.parameters.LCOMP == 2:
+            self.extract_correlation_matrix_LCOMP2(mf32_range)
         else:
             raise ValueError(f"Unsupported LCOMP value: {mf32_range.parameters.LCOMP}")
        
         
     def extract_covariance_matrix_LCOMP1(self, mf32_range):
-        """
-        Extracts the relative covariance matrix and constructs it efficiently from flattened data.
-        """
         if mf32_range.parameters.NLRS > 0 or mf32_range.parameters.NSRS > 1:
             raise ValueError(f"Number of short-range covariance ({mf32_range.parameters.NSRS} > 1) or long-range ({mf32_range.parameters.NLRS} > 0) not supported.")
         
@@ -642,8 +639,39 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
     
         # Set the covariance matrix as an attribute of CovarianceBase
         super().__setattr__('covariance_matrix', cov_matrix)
+       
+    
+    def extract_correlation_matrix_LCOMP2(self, mf32_range):
+        """
+        Reconstructs the covariance matrix from standard deviations and correlation coefficients when LCOMP == 2.
+        """
+        cm = mf32_range.parameters.correlation_matrix
+        correlation_matrix = np.identity(cm.NNN)   
+             
+        I_arr = np.array(cm.I) - 1  # zero-based
+        J_arr = np.array(cm.J) - 1
+        corr_arr = np.array(cm.correlations)
 
+        # Fill the upper triangle
+        correlation_matrix[I_arr, J_arr] = corr_arr
+        # Fill the lower triangle (since the matrix is symmetric)
+        correlation_matrix[J_arr, I_arr] = corr_arr
 
+        # covariance_matrix = np.outer(std_devs, std_devs) * correlation_matrix
+        # Set the initial, unfiltered index mapping right after extraction
+        index_mapping, std_devs = self.rm_data.get_standard_deviations()
+
+        non_zero_indices = np.where(np.array(std_devs) > 1e-16)[0]
+        correlation_matrix = correlation_matrix[np.ix_(non_zero_indices, non_zero_indices)]
+        
+        self.index_mapping = [index_mapping[i] for i in non_zero_indices]
+               
+        # Set the covariance matrix and correlation matrix attributes
+        # self.correlation_matrix = correlation_matrix
+        # Set the covariance matrix as an attribute of CovarianceBase
+        # This ensures we're using the one from the parent class
+        super().__setattr__('correlation_matrix', correlation_matrix)
+        
     def remove_zero_variance_parameters(self):
         """
         Removes parameters with zero variance from the covariance matrix and updates the index mapping accordingly.

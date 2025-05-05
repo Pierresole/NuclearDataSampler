@@ -109,35 +109,7 @@ class ResonanceRangeCovariance(CovarianceBase, ABC):
     #-----------------
     # Matrix operator
     #-----------------
-    
-    def extract_covariance_matrix_LCOMP2(self):
-        """
-        Reconstructs the covariance matrix from standard deviations and correlation coefficients when LCOMP == 2.
-        """
-        cm = self.resonance_parameters.correlation_matrix
-        NNN = cm.NNN  # Order of the correlation matrix
-        correlations = cm.correlations  # List of correlation coefficients
-        I = cm.I  # List of row indices (one-based)
-        J = cm.J  # List of column indices (one-based)
         
-        # Initialize the correlation matrix
-        correlation_matrix = np.identity(NNN)
-        
-        # Fill in the off-diagonal elements
-        for idx, corr_value in enumerate(correlations):
-            i = I[idx] - 1  # Convert to zero-based index
-            j = J[idx] - 1  # Convert to zero-based index
-            correlation_matrix[i, j] = corr_value
-            correlation_matrix[j, i] = corr_value  # Symmetric matrix
-        
-        # Now, compute the covariance matrix
-        self.covariance_matrix = np.outer(self.std_dev_vector, self.std_dev_vector) * correlation_matrix
-    
-    # Methods now inherited from CovarianceBase:
-    # - delete_parameters
-    # - remove_zero_variance_parameters
-    # - compute_L_matrix
-    # - write_to_hdf5
            
     def _find_nearest_energy(self, energy_list, target_energy, tolerance=1e-5):
         """

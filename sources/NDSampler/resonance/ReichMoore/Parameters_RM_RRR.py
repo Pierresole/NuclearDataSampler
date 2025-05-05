@@ -162,10 +162,11 @@ class LGroup:
         mf32_indices = {}
         mf32_energies = []
         MPAR = 0
-        diag = None
+        diag = []
         
-        # Extract diagonal uncertainties directly from MF32 if available
-        if mf32_range is not None and mf32_range.parameters.LCOMP == 1 and hasattr(mf32_range.parameters, 'short_range_blocks') and len(mf32_range.parameters.short_range_blocks) > 0:
+        # LCOMP1 forced us to put uncertainties in the diag, 
+        # To avoid duplicating code in what follows, do the same if LCOMP2 
+        if mf32_range.parameters.LCOMP == 1:
             block = mf32_range.parameters.short_range_blocks[0]
             MPAR = block.MPAR
             mf32_energies = block.ER[:]
@@ -180,14 +181,38 @@ class LGroup:
             # Get standard deviations
             diag = np.sqrt(np.diag(cov_matrix))
             
-        # For each MF2 resonance energy, find the matching MF32 index
-        for mf2_idx, mf2_er in enumerate(mf2_lvalue.ER):
-            # Find the closest matching energy in MF32
-            for mf32_idx, mf32_er in enumerate(mf32_energies):
-                if abs(mf2_er - mf32_er) < 1e-6:  # Using a small tolerance for floating-point comparison
-                    mf32_indices[mf2_idx] = mf32_idx
-                    break
-
+            # For each MF2 resonance energy, find the matching MF32 index
+            for mf2_idx, mf2_er in enumerate(mf2_lvalue.ER):
+                # Find the closest matching energy in MF32
+                for mf32_idx, mf32_er in enumerate(mf32_energies):
+                    if abs(mf2_er - mf32_er) < 1e-6:  # Using a small tolerance for floating-point comparison
+                        mf32_indices[mf2_idx] = mf32_idx
+                        break
+                    
+        elif mf32_range.parameters.LCOMP == 2:
+            MPAR = 3
+            # Check if any non-zero GFA or GFB uncertainties exist
+            GFA_list = mf32_range.parameters.uncertainties.GFA.to_list() if hasattr(mf32_range.parameters.uncertainties, "GFA") else []
+            GFB_list = mf32_range.parameters.uncertainties.GFB.to_list() if hasattr(mf32_range.parameters.uncertainties, "GFB") else []
+            if any(abs(x) > 0 for x in GFA_list):
+                MPAR = 4
+            if any(abs(x) > 0 for x in GFB_list):
+                MPAR = 5
+            # For each MF2 resonance energy, find the matching MF32 index
+            for mf2_idx, mf2_er in enumerate(mf2_lvalue.ER):
+                # Find the closest matching energy in MF32
+                for mf32_idx, mf32_er in enumerate(mf32_range.parameters.uncertainties.ER.to_list()):
+                    if abs(mf2_er - mf32_er) < 1e-6:  # Using a small tolerance for floating-point comparison
+                        diag.append(mf32_range.parameters.uncertainties.DER[mf32_idx])
+                        diag.append(mf32_range.parameters.uncertainties.DGN[mf32_idx])
+                        diag.append(mf32_range.parameters.uncertainties.DGG[mf32_idx])
+                        if MPAR >= 4:
+                            diag.append(mf32_range.parameters.uncertainties.DGFA[mf32_idx])
+                        if MPAR >= 5:
+                            diag.append(mf32_range.parameters.uncertainties.DGFB[mf32_idx])
+                        mf32_indices[mf2_idx] = mf32_idx
+                        break
+                    
         resonances = []
         for iResonance in range(mf2_lvalue.NRS):
             # Get MF32 index if available
@@ -324,8 +349,6 @@ class ReichMooreData:
         Creates an instance of ReichMooreData from an ENDFtk ResonanceRange object,
         calling from_endftk in cascade for ParticlePair and SpinGroup.
         """
-        if mf32_range.parameters.LCOMP == 2:
-            raise NotImplementedError("LCOMP=2 not implemented")
                 
         if mf32_range.parameters.ISR != 0:
             vDAPL = mf32_range.parameters.DAP.DAPL.to_list()
@@ -350,6 +373,7 @@ class ReichMooreData:
             NLSC=mf2_range.parameters.NLSC
         )
         
+        
     def reconstruct(self, sample_index: int = 0) -> ENDFtk.MF2.MT151.ReichMoore:
         
         # Use sampled AP value if available, otherwise use nominal value
@@ -361,57 +385,36 @@ class ReichMooreData:
                                             nlsc = self.NLSC, 
                                             lvalues = [lg.reconstruct(sample_index) for lg in self.LGroups])
         
-        
-    @classmethod
-    def read_from_hdf5(cls, hdf5_group):
-        """
-        Reads ReichMooreData from the given HDF5 group.
-        """
-        spi = hdf5_group.attrs['SPI']
-        
-        # Read AP as a dataset or create a list from the attribute
-        if 'AP' in hdf5_group:
-            ap = list(hdf5_group['AP'][()])
-        elif 'AP' in hdf5_group.attrs:
-            ap = [hdf5_group.attrs['AP']]
-        else:
-            ap = []
-            
-        dap = hdf5_group.attrs['DAP'] if 'DAP' in hdf5_group.attrs else None
-        lad = hdf5_group.attrs['LAD'] if 'LAD' in hdf5_group.attrs else None
-        nlsc = hdf5_group.attrs['NLSC']
-        
-        l_groups = []
-        if 'LGroups' in hdf5_group:
-            lg_group = hdf5_group['LGroups']
-            for lg_name in sorted(lg_group.keys()):
-                l_groups.append(LGroup.read_from_hdf5(lg_group[lg_name]))
-        
-        return cls(SPI=spi, AP=ap, DAP=dap, LAD=lad, LGroups=l_groups, NLSC=nlsc)
-    
-    def write_to_hdf5(self, hdf5_group):
-        """
-        Writes the ReichMooreData to the given HDF5 group.
-        """
-        hdf5_group.attrs['SPI'] = self.SPI
-        
-        # Store AP as a dataset if it's a list with multiple values
-        if len(self.AP) > 1:
-            hdf5_group.create_dataset('AP', data=self.AP)
-        elif len(self.AP) == 1:
-            hdf5_group.attrs['AP'] = self.AP[0]
-            
-        if self.DAP is not None:
-            hdf5_group.attrs['DAP'] = self.DAP
-            
-        hdf5_group.attrs['LAD'] = self.LAD
-        hdf5_group.attrs['NLSC'] = self.NLSC
 
-        # Create a subgroup for LGroups
-        lg_group = hdf5_group.create_group('LGroups')
-        for idx, l_group in enumerate(self.LGroups):
-            sg_subgroup = lg_group.create_group(f'LGroup_{idx}')
-            l_group.write_to_hdf5(sg_subgroup)
+    def get_standard_deviations(self, non_null_only: bool = False) -> Tuple[List[Tuple[int, int, int]], List[float]]:
+        """
+        Returns a tuple (index_mapping, std_devs) where:
+        - index_mapping: list of (spin_group_idx, resonance_idx, param_idx)
+        - std_devs: list of standard deviations (DER and DGAM)
+        If non_null_only is True, only non-None and non-zero values are included.
+        If False, all values are included, replacing None with 0.
+        """
+        index_mapping = []
+        std_devs = []
+        for l_group_idx, l_group in enumerate(self.LGroups):
+            for resonance_idx, resonance in enumerate(l_group.resonances):
+                # Parameter order: ER, GN, GG, GFA, GFB
+                param_info = [
+                    (resonance.ER, resonance.DER, 0),  # param_type 0 for ER
+                    (resonance.GN, resonance.DGN, 1),  # param_type 1 for GN
+                    (resonance.GG, resonance.DGG, 2),  # param_type 2 for GG
+                    (resonance.GFA, resonance.DGFA, 3),# param_type 3 for GFA
+                    (resonance.GFB, resonance.DGFB, 4) # param_type 4 for GFB
+                ]
+
+                for param_list, uncertainty, param_type in param_info:
+                    # Check if uncertainty exists and is non-zero, and param_list is valid
+                    if uncertainty is not None:
+                        index_mapping.append((l_group_idx, resonance_idx, param_type))
+                        std_devs.append(uncertainty) # Append the nominal value
+
+        return index_mapping, std_devs
+    
     
     def get_correlated_nominal_parameters(self) -> List[float]:
         """
@@ -447,6 +450,7 @@ class ReichMooreData:
         
         return correlated_params
     
+    
     def get_uncorr_nominal_parameters(self) -> List[float]:
         """
         Returns a list of nominal parameter values that are not included in the covariance matrix,
@@ -468,6 +472,7 @@ class ReichMooreData:
                 uncorr_params.append(l_group.APL[0])
         
         return uncorr_params
+
 
     def get_nominal_parameters_with_uncertainty(self) -> Tuple[List[Tuple[int, int, int]], List[float]]:
         """
@@ -497,3 +502,57 @@ class ReichMooreData:
                         nominal_values.append(param_list[0]) # Append the nominal value
 
         return index_mapping, nominal_values
+    
+    
+            
+    @classmethod
+    def read_from_hdf5(cls, hdf5_group):
+        """
+        Reads ReichMooreData from the given HDF5 group.
+        """
+        spi = hdf5_group.attrs['SPI']
+        
+        # Read AP as a dataset or create a list from the attribute
+        if 'AP' in hdf5_group:
+            ap = list(hdf5_group['AP'][()])
+        elif 'AP' in hdf5_group.attrs:
+            ap = [hdf5_group.attrs['AP']]
+        else:
+            ap = []
+            
+        dap = hdf5_group.attrs['DAP'] if 'DAP' in hdf5_group.attrs else None
+        lad = hdf5_group.attrs['LAD'] if 'LAD' in hdf5_group.attrs else None
+        nlsc = hdf5_group.attrs['NLSC']
+        
+        l_groups = []
+        if 'LGroups' in hdf5_group:
+            lg_group = hdf5_group['LGroups']
+            for lg_name in sorted(lg_group.keys()):
+                l_groups.append(LGroup.read_from_hdf5(lg_group[lg_name]))
+        
+        return cls(SPI=spi, AP=ap, DAP=dap, LAD=lad, LGroups=l_groups, NLSC=nlsc)
+    
+    
+    def write_to_hdf5(self, hdf5_group):
+        """
+        Writes the ReichMooreData to the given HDF5 group.
+        """
+        hdf5_group.attrs['SPI'] = self.SPI
+        
+        # Store AP as a dataset if it's a list with multiple values
+        if len(self.AP) > 1:
+            hdf5_group.create_dataset('AP', data=self.AP)
+        elif len(self.AP) == 1:
+            hdf5_group.attrs['AP'] = self.AP[0]
+            
+        if self.DAP is not None:
+            hdf5_group.attrs['DAP'] = self.DAP
+            
+        hdf5_group.attrs['LAD'] = self.LAD
+        hdf5_group.attrs['NLSC'] = self.NLSC
+
+        # Create a subgroup for LGroups
+        lg_group = hdf5_group.create_group('LGroups')
+        for idx, l_group in enumerate(self.LGroups):
+            sg_subgroup = lg_group.create_group(f'LGroup_{idx}')
+            l_group.write_to_hdf5(sg_subgroup)
