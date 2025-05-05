@@ -256,6 +256,21 @@ class CovarianceBase(ABC):
             return 0.0
 
 
+    # def calculate_adjusted_sigma(self, sigma, a, nominal_value, loc):
+    #     from scipy.stats import norm
+    #     import numpy as np
+
+    #     alpha = (a - loc)  # 'loc' is already standardized
+    #     phi_alpha = norm.pdf(alpha)
+    #     Phi_alpha = norm.cdf(alpha)
+    #     Z = 1 - Phi_alpha
+
+    #     if Z < 1e-10:
+    #         return sigma  # Negligible truncation effect
+
+    #     adjusted_variance_factor = 1 + (alpha * phi_alpha / Z) - (phi_alpha / Z) ** 2
+    #     adjusted_sigma = sigma * np.sqrt(adjusted_variance_factor)
+    #     return adjusted_sigma
 
 
     def calculate_adjusted_sigma(self, nominal_sigma, a, b=10.0, adjusted_mean=0.0):
