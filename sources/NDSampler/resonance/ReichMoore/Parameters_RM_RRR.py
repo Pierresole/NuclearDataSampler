@@ -163,6 +163,7 @@ class LGroup:
         mf32_energies = []
         MPAR = 0
         diag = []
+        resonances = []
         
         # LCOMP1 forced us to put uncertainties in the diag, 
         # To avoid duplicating code in what follows, do the same if LCOMP2 
@@ -189,6 +190,46 @@ class LGroup:
                         mf32_indices[mf2_idx] = mf32_idx
                         break
                     
+            for iResonance in range(mf2_lvalue.NRS):
+                # Get MF32 index if available
+                mf32_idx = mf32_indices.get(iResonance, None)
+                
+                # Initialize uncertainties
+                der, dgn, dgg, dgfa, dgfb = None, None, None, None, None
+                
+                # Set uncertainties based on MPAR value and diagonal elements
+                if mf32_idx is not None and diag is not None:
+                    base_idx = mf32_idx * MPAR
+                    
+                    # Get uncertainties based on MPAR value
+                    if MPAR >= 1 and base_idx < len(diag):
+                        der = diag[base_idx]
+                    if MPAR >= 2 and base_idx + 1 < len(diag):
+                        dgn = diag[base_idx + 1]
+                    if MPAR >= 3 and base_idx + 2 < len(diag):
+                        dgg = diag[base_idx + 2]
+                    if MPAR >= 4 and base_idx + 3 < len(diag):
+                        dgfa = diag[base_idx + 3]
+                    if MPAR >= 5 and base_idx + 4 < len(diag):
+                        dgfb = diag[base_idx + 4]
+                
+                # Create resonance parameter
+                resonance = ResonanceParameter.from_endftk(
+                    ER=mf2_lvalue.ER[iResonance],
+                    DER=der,
+                    AJ=mf2_lvalue.spin_values[iResonance],
+                    GN=mf2_lvalue.neutron_widths[iResonance],
+                    DGN=dgn,
+                    GG=mf2_lvalue.gamma_widths[iResonance],
+                    DGG=dgg,
+                    GFA=mf2_lvalue.first_fission_widths[iResonance],
+                    DGFA=dgfa,
+                    GFB=mf2_lvalue.second_fission_widths[iResonance],
+                    DGFB=dgfb,
+                    index=mf32_idx
+                )
+                resonances.append(resonance)
+                    
         elif mf32_range.parameters.LCOMP == 2:
             MPAR = 3
             # Check if any non-zero GFA or GFB uncertainties exist
@@ -202,57 +243,25 @@ class LGroup:
             for mf2_idx, mf2_er in enumerate(mf2_lvalue.ER):
                 # Find the closest matching energy in MF32
                 for mf32_idx, mf32_er in enumerate(mf32_range.parameters.uncertainties.ER.to_list()):
-                    if abs(mf2_er - mf32_er) < 1e-6:  # Using a small tolerance for floating-point comparison
-                        diag.append(mf32_range.parameters.uncertainties.DER[mf32_idx])
-                        diag.append(mf32_range.parameters.uncertainties.DGN[mf32_idx])
-                        diag.append(mf32_range.parameters.uncertainties.DGG[mf32_idx])
-                        if MPAR >= 4:
-                            diag.append(mf32_range.parameters.uncertainties.DGFA[mf32_idx])
-                        if MPAR >= 5:
-                            diag.append(mf32_range.parameters.uncertainties.DGFB[mf32_idx])
-                        mf32_indices[mf2_idx] = mf32_idx
+                    if mf2_lvalue.AJ[mf2_idx] == mf32_range.parameters.uncertainties.AJ[mf32_idx] and abs(mf2_er - mf32_er) < 1e-6:  # Using a small tolerance for floating-point comparison
+
+                        # Create resonance parameter
+                        resonance = ResonanceParameter.from_endftk(
+                            ER=mf2_lvalue.ER[mf2_idx],
+                            DER=mf32_range.parameters.uncertainties.DER[mf32_idx],
+                            AJ=mf2_lvalue.spin_values[mf2_idx],
+                            GN=mf2_lvalue.neutron_widths[mf2_idx],
+                            DGN=mf32_range.parameters.uncertainties.DGN[mf32_idx],
+                            GG=mf2_lvalue.gamma_widths[mf2_idx],
+                            DGG=mf32_range.parameters.uncertainties.DGG[mf32_idx],
+                            GFA=mf2_lvalue.first_fission_widths[mf2_idx],
+                            DGFA=mf32_range.parameters.uncertainties.DGFA[mf32_idx],
+                            GFB=mf2_lvalue.second_fission_widths[mf2_idx],
+                            DGFB=mf32_range.parameters.uncertainties.DGFB[mf32_idx],
+                            index=mf32_idx
+                        )
+                        resonances.append(resonance)
                         break
-                    
-        resonances = []
-        for iResonance in range(mf2_lvalue.NRS):
-            # Get MF32 index if available
-            mf32_idx = mf32_indices.get(iResonance, None)
-            
-            # Initialize uncertainties
-            der, dgn, dgg, dgfa, dgfb = None, None, None, None, None
-            
-            # Set uncertainties based on MPAR value and diagonal elements
-            if mf32_idx is not None and diag is not None:
-                base_idx = mf32_idx * MPAR
-                
-                # Get uncertainties based on MPAR value
-                if MPAR >= 1 and base_idx < len(diag):
-                    der = diag[base_idx]
-                if MPAR >= 2 and base_idx + 1 < len(diag):
-                    dgn = diag[base_idx + 1]
-                if MPAR >= 3 and base_idx + 2 < len(diag):
-                    dgg = diag[base_idx + 2]
-                if MPAR >= 4 and base_idx + 3 < len(diag):
-                    dgfa = diag[base_idx + 3]
-                if MPAR >= 5 and base_idx + 4 < len(diag):
-                    dgfb = diag[base_idx + 4]
-            
-            # Create resonance parameter
-            resonance = ResonanceParameter.from_endftk(
-                ER=mf2_lvalue.ER[iResonance],
-                DER=der,
-                AJ=mf2_lvalue.spin_values[iResonance],
-                GN=mf2_lvalue.neutron_widths[iResonance],
-                DGN=dgn,
-                GG=mf2_lvalue.gamma_widths[iResonance],
-                DGG=dgg,
-                GFA=mf2_lvalue.first_fission_widths[iResonance],
-                DGFA=dgfa,
-                GFB=mf2_lvalue.second_fission_widths[iResonance],
-                DGFB=dgfb,
-                index=mf32_idx
-            )
-            resonances.append(resonance)
         
         # Sort resonances by increasing resonance energy (ER)
         resonances.sort(key=lambda r: r.ER[0])

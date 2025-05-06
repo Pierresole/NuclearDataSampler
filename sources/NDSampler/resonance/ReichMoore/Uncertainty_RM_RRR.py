@@ -368,13 +368,18 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                                     # Adjust mean and standard deviation if needed
                                     if a > -10:  # Only adjust if truncation has significant effect
                                         # Calculate adjusted mean parameter for truncnorm
-                                        loc = self.calculate_adjusted_mean(nominal_value, uncertainty)
+                                        print(a, nominal_value, uncertainty)
+                                        loc = self.calculate_adjusted_mean(nominal_value, a)
 
                                         # Calculate adjusted standard deviation for truncnorm
                                         # scale = self.calculate_adjusted_sigma(1.0, a, 10.0, loc)
-                                        
+                                        z_value = truncnorm.ppf(u_value,
+                                                                a - loc,      # lower bound
+                                                                np.inf,
+                                                                loc=loc,
+                                                                scale=1.0)
                                         # Use truncated normal with adjusted parameters
-                                        z_value = truncnorm.ppf(u_value, a - loc, np.inf, loc=loc, scale=1.0)
+                                        # z_value = truncnorm.ppf(u_value, a - loc, np.inf, loc=loc, scale=1.0)
                                         
                                         # Apply adjusted uncertainty
                                         sampled_value = nominal_value + z_value * uncertainty # / scale
@@ -652,10 +657,11 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         J_arr = np.array(cm.J) - 1
         corr_arr = np.array(cm.correlations)
 
-        # Fill the upper triangle
-        correlation_matrix[I_arr, J_arr] = corr_arr
-        # Fill the lower triangle (since the matrix is symmetric)
-        correlation_matrix[J_arr, I_arr] = corr_arr
+        if len(I_arr) > 0 and len(J_arr) > 0:
+            # Fill the upper triangle
+            correlation_matrix[I_arr, J_arr] = corr_arr
+            # Fill the lower triangle (since the matrix is symmetric)
+            correlation_matrix[J_arr, I_arr] = corr_arr
 
         # covariance_matrix = np.outer(std_devs, std_devs) * correlation_matrix
         # Set the initial, unfiltered index mapping right after extraction

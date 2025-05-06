@@ -222,38 +222,91 @@ class CovarianceBase(ABC):
     #     # For one-sided truncation (b is large), this works reasonably well
     #     return -a/3.0 if a > -5 else 0.0
     
-    def calculate_adjusted_mean(self, nominal_value, uncertainty):
+    # def calculate_adjusted_mean(self, nominal_value, uncertainty):
+    #     from scipy.stats import norm
+    #     from scipy.optimize import root_scalar
+    #     import numpy as np
+
+    #     # Function defining the difference from nominal mean
+    #     def mean_difference(mu_prime):
+    #         a_std = -mu_prime / uncertainty
+    #         pdf_a = norm.pdf(a_std)
+    #         cdf_a = norm.cdf(a_std)
+
+    #         if (1 - cdf_a) < 1e-10:
+    #             return mu_prime - nominal_value  # Avoid division by zero for large truncation
+
+    #         trunc_mean = mu_prime + uncertainty * pdf_a / (1 - cdf_a)
+    #         return trunc_mean - nominal_value
+
+    #     # Set appropriate bounds for root finding around nominal_value
+    #     bracket_low = nominal_value - 5 * uncertainty
+    #     bracket_high = nominal_value + 5 * uncertainty
+
+    #     # Solve the equation numerically
+    #     result = root_scalar(mean_difference, bracket=[bracket_low, bracket_high], method='brentq')
+
+    #     if result.converged:
+    #         adjusted_mu_prime = result.root
+    #         # Convert absolute adjusted_mu_prime back to standard units (loc)
+    #         loc = (adjusted_mu_prime - nominal_value) / uncertainty
+    #         return loc
+    #     else:
+    #         # Fallback: no adjustment
+    #         return 0.0
+
+    def calculate_adjusted_mean(nominal, a, tol=1e-12, maxiter=20):
+        """
+        Find loc such that 
+            loc + pdf(a-loc)/(1-cdf(a-loc)) = 0
+        using Newton's method.
+
+        Parameters
+        ----------
+        nominal : float
+            (Not used in the equation but kept for signature consistency.)
+        a : float
+            Lower truncation bound in standard units.
+        tol : float
+            Convergence tolerance on loc.
+        maxiter : int
+            Maximum Newton iterations.
+
+        Returns
+        -------
+        loc : float
+            The shift parameter for truncnorm so that the truncated mean is zero.
+        """
         from scipy.stats import norm
-        from scipy.optimize import root_scalar
-        import numpy as np
 
-        # Function defining the difference from nominal mean
-        def mean_difference(mu_prime):
-            a_std = -mu_prime / uncertainty
-            pdf_a = norm.pdf(a_std)
-            cdf_a = norm.cdf(a_std)
+        # define g(loc) and g'(loc)
+        def g(loc):
+            l = a - loc
+            return loc + norm.pdf(l)/(1 - norm.cdf(l))
 
-            if (1 - cdf_a) < 1e-10:
-                return mu_prime - nominal_value  # Avoid division by zero for large truncation
+        def g_prime(loc):
+            l = a - loc
+            lam = norm.pdf(l)/(1 - norm.cdf(l))              # λ(l)
+            # derivative λ'(l) = -l·λ(l) - [λ(l)]²
+            lam_prime = -l*lam - lam*lam
+            # dg/dloc = 1 + d[λ(a-loc)]/dloc = 1 + (−1)*λ'(l)
+            return 1 - lam_prime
 
-            trunc_mean = mu_prime + uncertainty * pdf_a / (1 - cdf_a)
-            return trunc_mean - nominal_value
+        # initial guess: if truncation negligible, loc≈0; else a/2
+        loc = 0.0 if a<2 else a/2.0
 
-        # Set appropriate bounds for root finding around nominal_value
-        bracket_low = nominal_value - 5 * uncertainty
-        bracket_high = nominal_value + 5 * uncertainty
-
-        # Solve the equation numerically
-        result = root_scalar(mean_difference, bracket=[bracket_low, bracket_high], method='brentq')
-
-        if result.converged:
-            adjusted_mu_prime = result.root
-            # Convert absolute adjusted_mu_prime back to standard units (loc)
-            loc = (adjusted_mu_prime - nominal_value) / uncertainty
-            return loc
+        for i in range(maxiter):
+            f = g(loc)
+            fp = g_prime(loc)
+            step = f/fp
+            loc -= step
+            if abs(step) < tol:
+                break
         else:
-            # Fallback: no adjustment
-            return 0.0
+            print(a, nominal)
+            raise RuntimeError("Newton method did not converge in calculate_adjusted_mean()")
+        return loc
+
 
 
     # def calculate_adjusted_sigma(self, sigma, a, nominal_value, loc):
