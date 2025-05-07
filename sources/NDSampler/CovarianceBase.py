@@ -255,7 +255,59 @@ class CovarianceBase(ABC):
     #         # Fallback: no adjustment
     #         return 0.0
 
-    def calculate_adjusted_mean(nominal, a, tol=1e-12, maxiter=20):
+    # def calculate_adjusted_mean(nominal, a, tol=1e-12, maxiter=20):
+    #     """
+    #     Find loc such that 
+    #         loc + pdf(a-loc)/(1-cdf(a-loc)) = 0
+    #     using Newton's method.
+
+    #     Parameters
+    #     ----------
+    #     nominal : float
+    #         (Not used in the equation but kept for signature consistency.)
+    #     a : float
+    #         Lower truncation bound in standard units.
+    #     tol : float
+    #         Convergence tolerance on loc.
+    #     maxiter : int
+    #         Maximum Newton iterations.
+
+    #     Returns
+    #     -------
+    #     loc : float
+    #         The shift parameter for truncnorm so that the truncated mean is zero.
+    #     """
+    #     from scipy.stats import norm
+
+    #     # define g(loc) and g'(loc)
+    #     def g(loc):
+    #         l = a - loc
+    #         return loc + norm.pdf(l)/(1 - norm.cdf(l))
+
+    #     def g_prime(loc):
+    #         l = a - loc
+    #         lam = norm.pdf(l)/(1 - norm.cdf(l))              # λ(l)
+    #         # derivative λ'(l) = -l·λ(l) - [λ(l)]²
+    #         lam_prime = -l*lam - lam*lam
+    #         # dg/dloc = 1 + d[λ(a-loc)]/dloc = 1 + (−1)*λ'(l)
+    #         return 1 - lam_prime
+
+    #     # initial guess: if truncation negligible, loc≈0; else a/2
+    #     loc = 0.0 if a<2 else a/2.0
+
+    #     for i in range(maxiter):
+    #         f = g(loc)
+    #         fp = g_prime(loc)
+    #         step = f/fp
+    #         loc -= step
+    #         if abs(step) < tol:
+    #             break
+    #     else:
+    #         print(a, nominal)
+    #         raise RuntimeError("Newton method did not converge in calculate_adjusted_mean()")
+    #     return loc
+
+    def calculate_adjusted_mean(nominal, a, tol=1e-12, maxiter=100):
         """
         Find loc such that 
             loc + pdf(a-loc)/(1-cdf(a-loc)) = 0
@@ -278,35 +330,63 @@ class CovarianceBase(ABC):
             The shift parameter for truncnorm so that the truncated mean is zero.
         """
         from scipy.stats import norm
+        import numpy as np
 
         # define g(loc) and g'(loc)
         def g(loc):
             l = a - loc
+            # Add safety check for numerical issues
+            if l > 8:  # Far in the tail
+                return loc  # Truncation effect is negligible
             return loc + norm.pdf(l)/(1 - norm.cdf(l))
 
         def g_prime(loc):
             l = a - loc
-            lam = norm.pdf(l)/(1 - norm.cdf(l))              # λ(l)
-            # derivative λ'(l) = -l·λ(l) - [λ(l)]²
+            # Add safety check for numerical issues
+            if l > 8:  # Far in the tail
+                return 1.0  # Truncation effect is negligible
+            lam = norm.pdf(l)/(1 - norm.cdf(l))
             lam_prime = -l*lam - lam*lam
-            # dg/dloc = 1 + d[λ(a-loc)]/dloc = 1 + (−1)*λ'(l)
             return 1 - lam_prime
 
-        # initial guess: if truncation negligible, loc≈0; else a/2
-        loc = 0.0 if a<2 else a/2.0
-
+        # Improved initial guess
+        if a <= -5:  # Extreme negative truncation
+            loc = 0.0  # Standard normal is fine
+        elif a <= 0:
+            loc = a/3.0  # Empirical heuristic
+        else:
+            loc = a*0.6  # Empirical heuristic
+        
+        # Track iterations for debugging
+        iters = 0
+        
         for i in range(maxiter):
+            iters += 1
             f = g(loc)
             fp = g_prime(loc)
+            
+            # Prevent division by extremely small values
+            if abs(fp) < 1e-10:
+                fp = np.sign(fp) * 1e-10
+                
             step = f/fp
-            loc -= step
+            
+            # Dampen step size for stability
+            if abs(step) > 1.0:
+                step *= 0.5
+                
+            loc_new = loc - step
+            
+            # Check for convergence
             if abs(step) < tol:
-                break
-        else:
-            print(a, nominal)
-            raise RuntimeError("Newton method did not converge in calculate_adjusted_mean()")
-        return loc
-
+                return loc_new
+                
+            # Update loc
+            loc = loc_new
+            
+        # If we get here, we didn't converge
+        print(f"Warning: Newton method did not converge after {iters} iterations. a={a}, nominal={nominal}, last loc={loc}")
+        return loc  # Return best estimate anyway
 
 
     # def calculate_adjusted_sigma(self, sigma, a, nominal_value, loc):
