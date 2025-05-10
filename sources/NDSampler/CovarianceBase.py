@@ -307,6 +307,35 @@ class CovarianceBase(ABC):
     #         raise RuntimeError("Newton method did not converge in calculate_adjusted_mean()")
     #     return loc
 
+    def convert_to_lognormal_params(self, mean, std_dev):
+        """
+        Convert normal distribution parameters to lognormal distribution parameters.
+        
+        The lognormal distribution is defined by its mean (mu_ln) and standard deviation (sigma_ln).
+        The conversion is done using the following formulas:
+            mean = exp(mu_ln + sigma_ln^2 / 2)
+            variance = (exp(sigma_ln^2) - 1) * exp(2*mu_ln + sigma_ln^2)
+        Rearranging gives:
+            mu_ln = log(mean) - 0.5 * log(1 + std_dev^2 / (mean^2))
+            sigma_ln = sqrt(log(1 + std_dev^2 / (mean^2)))
+        
+        Parameters:
+        -----------
+        mean : float
+            Mean of the normal distribution.
+        std_dev : float
+            Standard deviation of the normal distribution.
+        
+        Returns:
+        --------
+        tuple
+            (mu_ln, sigma_ln) - Parameters of the equivalent lognormal distribution.
+        """
+        mu_ln = np.log(mean) - 0.5 * np.log(1 + std_dev**2 / (mean**2))
+        sigma_ln = np.sqrt(np.log(1 + std_dev**2 / (mean**2)))
+        return mu_ln, sigma_ln
+        
+        
     def calculate_adjusted_mean(nominal, a, tol=1e-12, maxiter=100):
         """
         Find loc such that 
@@ -497,7 +526,6 @@ class CovarianceBase(ABC):
             raise ValueError("Decomposed covariance matrix is not initialized")
         
         n_params = self.L_matrix.shape[0]
-        print(n_params, "parameters in covariance matrix")
         
         # Generate all samples at once
         batch_size = num_samples

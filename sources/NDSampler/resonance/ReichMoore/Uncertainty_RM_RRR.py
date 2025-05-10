@@ -304,7 +304,7 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
             sample_list = samples
             operation_mode = 'stack'
         
-        from scipy.stats import norm, truncnorm
+        from scipy.stats import norm, lognorm
         
         # For debug mode, we'll collect transformed samples
         if debug:
@@ -368,21 +368,21 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                                     # Adjust mean and standard deviation if needed
                                     if a > -10:  # Only adjust if truncation has significant effect
                                         # Calculate adjusted mean parameter for truncnorm
-                                        print(a, nominal_value, uncertainty)
-                                        loc = self.calculate_adjusted_mean(nominal_value, a)
-
+                                        # loc = self.calculate_adjusted_mean(nominal_value, a)
+                                        mu_ln, sigma_ln = self.convert_to_lognormal_params(nominal_value, uncertainty)
+                                        sampled_value = lognorm.ppf(u_value, scale=np.exp(mu_ln), s=sigma_ln)
                                         # Calculate adjusted standard deviation for truncnorm
                                         # scale = self.calculate_adjusted_sigma(1.0, a, 10.0, loc)
-                                        z_value = truncnorm.ppf(u_value,
-                                                                a - loc,      # lower bound
-                                                                np.inf,
-                                                                loc=loc,
-                                                                scale=1.0)
+                                        # z_value = truncnorm.ppf(u_value,
+                                        #                         a - loc,      # lower bound
+                                        #                         np.inf,
+                                        #                         loc=loc,
+                                        #                         scale=1.0)
                                         # Use truncated normal with adjusted parameters
                                         # z_value = truncnorm.ppf(u_value, a - loc, np.inf, loc=loc, scale=1.0)
                                         
                                         # Apply adjusted uncertainty
-                                        sampled_value = nominal_value + z_value * uncertainty # / scale
+                                        # sampled_value = nominal_value + z_value * uncertainty # / scale
                                     else:
                                         # If lower bound is far away, use regular normal
                                         z_value = norm.ppf(u_value)
