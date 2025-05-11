@@ -612,13 +612,13 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         """
         if mf32_range.parameters.LCOMP == 1:
             self.extract_correlation_matrix_LCOMP1(mf32_range)
-        if mf32_range.parameters.LCOMP == 2:
+        elif mf32_range.parameters.LCOMP == 2:
             self.extract_correlation_matrix_LCOMP2(mf32_range)
         else:
             raise ValueError(f"Unsupported LCOMP value: {mf32_range.parameters.LCOMP}")
        
         
-    def extract_covariance_matrix_LCOMP1(self, mf32_range):
+    def extract_correlation_matrix_LCOMP1(self, mf32_range):
         if mf32_range.parameters.NLRS > 0 or mf32_range.parameters.NSRS > 1:
             raise ValueError(f"Number of short-range covariance ({mf32_range.parameters.NSRS} > 1) or long-range ({mf32_range.parameters.NLRS} > 0) not supported.")
         
@@ -641,9 +641,16 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         # Make symmetric by adding the transpose (excluding diagonal)
         # Since we already filled the diagonal in the upper triangle assignment
         cov_matrix = cov_matrix + cov_matrix.T - np.diag(np.diag(cov_matrix))
-    
+        
+        # Non zero indices
+        non_zero_indices = np.where(np.diag(cov_matrix) > 1e-16)[0]
+        cov_matrix = cov_matrix[np.ix_(non_zero_indices, non_zero_indices)]
+        # Convert to covariance to correlation matrix
+        std_devs = np.sqrt(np.diag(cov_matrix))
+        correlation_matrix = cov_matrix / np.outer(std_devs, std_devs)
+        
         # Set the covariance matrix as an attribute of CovarianceBase
-        super().__setattr__('covariance_matrix', cov_matrix)
+        super().__setattr__('correlation_matrix', correlation_matrix)
        
     
     def extract_correlation_matrix_LCOMP2(self, mf32_range):
