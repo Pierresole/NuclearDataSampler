@@ -104,6 +104,8 @@ class PerturbLeaprInput:
                 # Perturb the spectrum
                 if "spectrum" in self.perturb_params:
                     self.perturb_spectrum(temp_data)
+                elif "spectrum_rational" in self.perturb_params:
+                    self.perturb_two_peak_spectrum(temp_data)
 
             # Write the perturbed file
             output_file = os.path.join("random", output_template.format(f"random{i+1}"))
@@ -349,4 +351,55 @@ class PerturbLeaprInput:
 
         # Update the params with the perturbed spectrum
         params.rho_values = new_rho_values
+
+    def perturb_two_peak_spectrum(self, params: TemperatureDependentData):
+        """
+        Perturb a 2-peak rational spectrum using user-provided rational_params, peaks_range, and relative_spacing_factor.
+        Only the first peak is perturbed randomly within peaks_range[0], the second is shifted by relative_spacing_factor * delta1.
+        Updates params.rho_values in place.
+        """
+        import numpy as np
+        from scipy.interpolate import interp1d
+        from scipy.integrate import simpson
+
+        spectrum_params = self.perturb_params["spectrum_rational"]
+        rational_params = np.array(spectrum_params["rational_params"])  # [P1, E1, D1, P2, E2, D2]
+        peaks_range = spectrum_params["peaks_range"][0]  # [min1, max1]
+        relative_spacing_factor = spectrum_params.get("relative_spacing_factor", 0.1)
+
+        # Draw delta1 for the first peak
+        delta1 = np.random.uniform(peaks_range[0], peaks_range[1])
+        delta2 = delta1 * (1 + relative_spacing_factor)
+
+        perturbed_params = rational_params.copy()
+        perturbed_params[1] += delta1  # E1
+        perturbed_params[4] += delta2  # E2
+
+        def rational_model(E, *params):
+            n_peaks = len(params) // 3
+            rho = np.zeros_like(E)
+            for i in range(n_peaks):
+                P = params[3*i]
+                E_i = params[3*i+1]
+                Delta = params[3*i+2]
+                numerator = P * E**2
+                denominator = (E**2 - E_i**2)**2 + Delta**2 * E**2
+                rho += numerator / denominator
+            return rho
+
+        delta_E = params.delta
+        ni = params.ni
+        E_data = np.array([delta_E * i for i in range(ni)])
+        rho_data = np.array(params.rho_values)
+
+        E_fit = np.linspace(E_data.min(), E_data.max(), len(E_data))
+        rho_interp = interp1d(E_data, rho_data, kind='cubic', bounds_error=False, fill_value=0)
+        rho_orig_interp = rho_interp(E_fit)
+        integral_original = simpson(rho_orig_interp, E_fit)
+
+        rho_perturbed = rational_model(E_fit, *perturbed_params)
+        integral_perturbed = simpson(rho_perturbed, E_fit)
+        rho_perturbed_normalized = rho_perturbed * (integral_original / integral_perturbed)
+
+        params.rho_values = rho_perturbed_normalized.tolist()
 
