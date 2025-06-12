@@ -93,7 +93,10 @@ class PerturbLeaprInput:
                     elif self.sampling_type == "LHS":
                         temp_data.twt = TWT[i]
                 if "c_perturb" in self.perturb_params:
-                    temp_data.c *= 1 + np.random.uniform(*self.perturb_params["c_perturb"]["range"])
+                    c_range = self.perturb_params["c_perturb"].get("range", None)
+                    if c_range is not None:
+                        print(f"Perturbing C with range: {c_range}")
+                        temp_data.c = np.random.uniform(*c_range)
 
                 # Apply constrained LHS sampling to oscillator weights
                 if self.sampling_type == "LHS" and "osc_weights_perturb" in self.perturb_params:
