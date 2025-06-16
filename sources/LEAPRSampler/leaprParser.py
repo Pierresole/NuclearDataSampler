@@ -86,17 +86,21 @@ class PerturbLeaprInput:
                                     perturb_range[0] + samples[i, j] * (perturb_range[1] - perturb_range[0])
                                 )
 
-                # Perturb other parameters (e.g., TWT, C) using uniform random sampling
+                # Perturb other parameters (e.g., TWT, C) using absolute uniform sampling
                 if "twt_perturb" in self.perturb_params:
+                    twt_range = self.perturb_params["twt_perturb"]["range"]
                     if self.sampling_type == "Sobol":
-                        temp_data.twt *= 1 + np.random.uniform(*self.perturb_params["twt_perturb"]["range"])
+                        temp_data.twt = np.random.uniform(*twt_range)
                     elif self.sampling_type == "LHS":
                         temp_data.twt = TWT[i]
                 if "c_perturb" in self.perturb_params:
                     c_range = self.perturb_params["c_perturb"].get("range", None)
                     if c_range is not None:
-                        print(f"Perturbing C with range: {c_range}")
-                        temp_data.c = np.random.uniform(*c_range)
+                        # 50% chance to set c to 0, 50% to sample within range
+                        if np.random.rand() < 0.5:
+                            temp_data.c = 0
+                        else:
+                            temp_data.c = np.random.uniform(*c_range)
 
                 # Apply constrained LHS sampling to oscillator weights
                 if self.sampling_type == "LHS" and "osc_weights_perturb" in self.perturb_params:
