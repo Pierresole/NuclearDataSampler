@@ -15,10 +15,9 @@ import multiprocessing
 #                     - interfaces with LEAPR/THERMR to reconstruct cross sections (parallel or sequential).
 
 class PerturbLeaprInput:
-    def __init__(self, path: str, perturb_params: dict, sampling_type: str = "LHS"):
+    def __init__(self, path: str, perturb_params: dict):
         self.path = path # Path to the LEAPR input file
         self.perturb_params = perturb_params # How and which paremeters to perturb
-        self.sampling_type = sampling_type
         self.authorized_perturbations = {
             "twt_perturb": {"distribution": "uniform", "range": (-0.3, 0.3)},
             "c_perturb": {"distribution": "uniform", "range": (-0.3, 0.3)},
@@ -28,95 +27,156 @@ class PerturbLeaprInput:
 
     def perturb_all(self, n_files: int, output_template: str):
         """
-        Generates multiple perturbed LEAPR files using Sobol or LHS sampling.
+        Generates multiple perturbed LEAPR files using LHS sampling for sensitivity analysis.
+        
         :param n_files: Number of perturbed files to generate.
         :param output_template: Template for output filenames (e.g., "perturbed_{}.leapr").
         """
-        if self.sampling_type == "Sobol":
-            # Initialize Sobol sampler
-            total_oscillators = len(self.perturb_params.get("osc_energies_perturb", []))
-            sampler = qmc.Sobol(d=total_oscillators, scramble=True)
-            samples = sampler.random_base2(m=int(np.log2(n_files)))
-        elif self.sampling_type == "LHS":
-            # Constrained LHS for TWT, WOsc1, WOsc2
-            if "twt_perturb" in self.perturb_params and "osc_weights_perturb" in self.perturb_params:
-                twt_range = self.perturb_params["twt_perturb"]["range"]
-                osc_weights_range = self.perturb_params["osc_weights_perturb"]["range"]
-                tbeta = self.perturb_params.get("tbeta", 0.2)  # Default TBETA value
-                variable_ranges = [twt_range, osc_weights_range, osc_weights_range]
-
-                lhs_samples = lhs(2, samples=n_files)  # Generate LHS for TWT and WOsc1
-                TWT = lhs_samples[:, 0] * (twt_range[1] - twt_range[0]) + twt_range[0]
-                WOsc1 = lhs_samples[:, 1] * (osc_weights_range[1] - osc_weights_range[0]) + osc_weights_range[0]
-                WOsc2 = 1 - tbeta - TWT - WOsc1
-
-                # Validate WOsc2 range
-                if np.any(WOsc2 < osc_weights_range[0]) or np.any(WOsc2 > osc_weights_range[1]):
-                    raise ValueError("Some WOsc2 values are out of range. Adjust variable_ranges or TBETA.")
-            else:
-                samples = lhs(len(self.perturb_params.get("osc_energies_perturb", [])), samples=n_files)
-        else:
-            raise ValueError(f"Unsupported sampling type: {self.sampling_type}")
-
-        # Create the "random" folder if it doesn't exist, delete if exists
-        if os.path.exists("random"):
-            subprocess.run(["rm", "-rf", "random"])
-            os.makedirs("random")
-
+        # Prepare output directory
+        self._prepare_output_directory()
+        
+        # Generate LHS samples for all parameters
+        lhs_samples = self._generate_lhs_samples(n_files)
+        
+        # Generate perturbed files
         for i in range(n_files):
             perturbed_data = deepcopy(self.leapr_input)
-
-            # Perturb all temperature dependant parameters of a LEAPR input
+            
+            # Apply perturbations to each temperature-dependent data set
             for temp_data in perturbed_data.temp_parameters:
-                # Perturb oscillator energies
-                if "osc_energies_perturb" in self.perturb_params:
-                    for j, osc_perturb in enumerate(self.perturb_params["osc_energies_perturb"]):
-                        osc_number = osc_perturb["osc_number"] - 1  # Convert to 0-based index
-                        perturb_range = osc_perturb["range"]
-
-                        if 0 <= osc_number < len(temp_data.osc_energies):
-                            if self.sampling_type == "Sobol":
-                                # Map Sobol sample to the specified range
-                                temp_data.osc_energies[osc_number] = (
-                                    perturb_range[0] + samples[i, j] * (perturb_range[1] - perturb_range[0])
-                                )
-                            elif self.sampling_type == "LHS":
-                                # Map LHS sample to the specified range
-                                temp_data.osc_energies[osc_number] = (
-                                    perturb_range[0] + samples[i, j] * (perturb_range[1] - perturb_range[0])
-                                )
-
-                # Perturb other parameters (e.g., TWT, C) using absolute uniform sampling
-                if "twt_perturb" in self.perturb_params:
-                    twt_range = self.perturb_params["twt_perturb"]["range"]
-                    if self.sampling_type == "Sobol":
-                        temp_data.twt = np.random.uniform(*twt_range)
-                    elif self.sampling_type == "LHS":
-                        temp_data.twt = TWT[i]
-                if "c_perturb" in self.perturb_params:
-                    c_range = self.perturb_params["c_perturb"].get("range", None)
-                    if c_range is not None:
-                        # 50% chance to set c to 0, 50% to sample within range
-                        if np.random.rand() < 0.5:
-                            temp_data.c = 0
-                        else:
-                            temp_data.c = np.random.uniform(*c_range)
-
-                # Apply constrained LHS sampling to oscillator weights
-                if self.sampling_type == "LHS" and "osc_weights_perturb" in self.perturb_params:
-                    if len(temp_data.osc_weights) >= 2:
-                        temp_data.osc_weights[0] = WOsc1[i]
-                        temp_data.osc_weights[1] = WOsc2[i]
-
-                # Perturb the spectrum
-                if "spectrum" in self.perturb_params:
-                    self.perturb_spectrum(temp_data)
-                elif "spectrum_rational" in self.perturb_params:
-                    self.perturb_two_peak_spectrum(temp_data)
-
+                self._apply_perturbations(temp_data, i, lhs_samples)
+            
             # Write the perturbed file
             output_file = os.path.join("random", output_template.format(f"random{i+1}"))
             perturbed_data.write_to_file(output_file)
+    
+    def _prepare_output_directory(self):
+        """Create and clean the output directory for perturbed files."""
+        if os.path.exists("random"):
+            subprocess.run(["rm", "-rf", "random"])
+        os.makedirs("random")
+    
+    def _generate_lhs_samples(self, n_files: int):
+        """Generate LHS samples for all perturbation parameters."""
+        # Count total parameters to sample
+        n_params = 0
+        
+        # Count oscillator energies
+        if "osc_energies_perturb" in self.perturb_params:
+            n_params += len(self.perturb_params["osc_energies_perturb"])
+        
+        # Count other single parameters
+        single_params = ["twt_perturb", "c_perturb"]
+        for param in single_params:
+            if param in self.perturb_params:
+                n_params += 1
+        
+        # Handle oscillator weights (special case with constraints)
+        if "osc_weights_perturb" in self.perturb_params:
+            n_params += 2  # WOsc1 and WOsc2
+        
+        # Generate LHS samples if we have parameters to sample
+        if n_params > 0:
+            return lhs(n_params, samples=n_files)
+        else:
+            return np.zeros((n_files, 1))  # Dummy array if no parameters
+    
+    def _apply_perturbations(self, temp_data, sample_index: int, lhs_samples):
+        """Apply all perturbations to a temperature data set."""
+        param_idx = 0  # Track which column of LHS samples we're using
+        
+        # Perturb oscillator energies
+        param_idx = self._perturb_oscillator_energies(temp_data, sample_index, lhs_samples, param_idx)
+        
+        # Perturb TWT (thermal weight)
+        param_idx = self._perturb_twt(temp_data, sample_index, lhs_samples, param_idx)
+        
+        # Perturb C parameter
+        param_idx = self._perturb_c_parameter(temp_data, sample_index, lhs_samples, param_idx)
+        
+        # Perturb oscillator weights (with constraints)
+        param_idx = self._perturb_oscillator_weights(temp_data, sample_index, lhs_samples, param_idx)
+        
+        # Perturb spectra
+        self._perturb_spectra(temp_data)
+    
+    def _perturb_oscillator_energies(self, temp_data, sample_index: int, lhs_samples, param_idx: int):
+        """Perturb oscillator energies and return updated parameter index."""
+        if "osc_energies_perturb" not in self.perturb_params:
+            return param_idx
+        
+        for osc_perturb in self.perturb_params["osc_energies_perturb"]:
+            osc_number = osc_perturb["osc_number"] - 1  # Convert to 0-based index
+            perturb_range = osc_perturb["range"]
+            
+            if 0 <= osc_number < len(temp_data.osc_energies):
+                # Map LHS sample to the specified range
+                lhs_value = lhs_samples[sample_index, param_idx]
+                temp_data.osc_energies[osc_number] = (
+                    perturb_range[0] + lhs_value * (perturb_range[1] - perturb_range[0])
+                )
+            param_idx += 1
+        
+        return param_idx
+    
+    def _perturb_twt(self, temp_data, sample_index: int, lhs_samples, param_idx: int):
+        """Perturb TWT (thermal weight) and return updated parameter index."""
+        if "twt_perturb" not in self.perturb_params:
+            return param_idx
+        
+        twt_range = self.perturb_params["twt_perturb"]["range"]
+        lhs_value = lhs_samples[sample_index, param_idx]
+        temp_data.twt = twt_range[0] + lhs_value * (twt_range[1] - twt_range[0])
+        
+        return param_idx + 1
+    
+    def _perturb_c_parameter(self, temp_data, sample_index: int, lhs_samples, param_idx: int):
+        """Perturb C parameter (can be 0 or within range) and return updated parameter index."""
+        if "c_perturb" not in self.perturb_params:
+            return param_idx
+        
+        c_range = self.perturb_params["c_perturb"].get("range", None)
+        if c_range is not None:
+            # 50% chance to set c to 0, 50% to sample within range
+            if np.random.rand() < 0.5:
+                temp_data.c = 0
+            else:
+                temp_data.c = np.random.uniform(*c_range)
+        
+        return param_idx + 1
+    
+    def _perturb_oscillator_weights(self, temp_data, sample_index: int, lhs_samples, param_idx: int):
+        """Perturb oscillator weights with constraints and return updated parameter index."""
+        if "osc_weights_perturb" not in self.perturb_params or len(temp_data.osc_weights) < 2:
+            return param_idx
+        
+        osc_weights_range = self.perturb_params["osc_weights_perturb"]["range"]
+        tbeta = self.perturb_params.get("tbeta", 0.2)
+        
+        # Sample WOsc1 and calculate constrained WOsc2
+        lhs_wosc1 = lhs_samples[sample_index, param_idx]
+        wosc1 = osc_weights_range[0] + lhs_wosc1 * (osc_weights_range[1] - osc_weights_range[0])
+        
+        # Calculate TWT if it was perturbed, otherwise use current value
+        current_twt = temp_data.twt
+        wosc2 = 1 - tbeta - current_twt - wosc1
+        
+        # Validate WOsc2 is within range
+        if not (osc_weights_range[0] <= wosc2 <= osc_weights_range[1]):
+            raise ValueError(f"WOsc2 ({wosc2:.4f}) is out of range {osc_weights_range}. "
+                           f"Adjust ranges or tbeta ({tbeta}).")
+        
+        temp_data.osc_weights[0] = wosc1
+        temp_data.osc_weights[1] = wosc2
+        
+        return param_idx + 1  # Only increment by 1 since WOsc2 is calculated, not sampled
+    
+    def _perturb_spectra(self, temp_data):
+        """Perturb spectra if specified in parameters.""" 
+        if "spectrum" in self.perturb_params:
+            self.perturb_spectrum(temp_data)
+        elif "spectrum_rational" in self.perturb_params:
+            self.perturb_two_peak_spectrum(temp_data)
     
 
     ###################################################
