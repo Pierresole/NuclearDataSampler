@@ -83,8 +83,22 @@ class NDSampler:
                             
                         elif MF == 34:
                             from .angular.AngularDistributionCovariance import AngularDistributionCovariance
+                            print(f"Processing MF={MF}, MT={MT}")
                             covariance_objects = []
-                            AngularDistributionCovariance.fill_from_resonance_range(self.original_tape, covariance_objects)
+                            
+                            # Extract MT-specific Legendre orders from the covariance dictionary
+                            mt_legendre_orders = None
+                            if 34 in self.covariance_dict and MT in self.covariance_dict[34]:
+                                mt_legendre_orders = self.covariance_dict[34][MT]
+                            
+                            # Pass only the MT-specific data: {MT: [L_orders]}
+                            mt_covariance_subset = {MT: mt_legendre_orders} if mt_legendre_orders else None
+                            
+                            AngularDistributionCovariance.fill_from_angular_distribution(
+                                self.original_tape, 
+                                covariance_objects, 
+                                mt_covariance_subset
+                            )
                             self.covariance_objects.extend(covariance_objects)
                             self._add_covariance_to_hdf5(covariance_objects, "AngularDist")
                         else:
@@ -169,6 +183,9 @@ class NDSampler:
             # Now create individual tapes for each sample
             for i in range(1, num_samples + 1):
                 print(f"Creating tape for sample {i}...")
+                # Create a fresh copy of the original tape for each sample
+                # Use deepcopy or re-read from original source to avoid cumulative perturbations
+                # endf_tape: Tape = Tape.from_string(self.original_tape.to_string())
                 endf_tape: Tape = self.original_tape
                 for covariance_obj in covariance_objects:
                     covariance_obj.update_tape(endf_tape, i)
@@ -203,21 +220,20 @@ def generate_covariance_dict(endf_tape):
                         MT1 = sub_section.MT1
                         covariance_dict[MF][MT].append(MT1)
                 elif MF == 34:
-                    # Parse the MF34 section
-                    covariance_dict[MF][MT] = {}
+                    # Parse the MF34 section - simplified format
+                    # Since MT and MT1 are always the same for angular distributions,
+                    # we create a simplified structure: {MT: [L_orders]}
+                    legendre_orders = set()
 
                     # Loop over reactions in MF34
                     for sub_section in parsed_section.reactions:
-                        MT1 = sub_section.MT1
-                        covariance_dict[MF][MT][MT1] = {}
-
-                        # Loop over Legendre blocks
+                        # Loop over Legendre blocks to collect all orders
                         for legendre_block in sub_section.legendre_blocks:
                             L = legendre_block.L
-                            L1 = legendre_block.L1
-                            if L not in covariance_dict[MF][MT][MT1]:
-                                covariance_dict[MF][MT][MT1][L] = []
-                            covariance_dict[MF][MT][MT1][L].append(L1)
+                            legendre_orders.add(L)
+                    
+                    # Store as sorted list for the MT
+                    covariance_dict[MF][MT] = sorted(list(legendre_orders))
                 else:
                     # Placeholder for other MFs
                     covariance_dict[MF][MT] = None
