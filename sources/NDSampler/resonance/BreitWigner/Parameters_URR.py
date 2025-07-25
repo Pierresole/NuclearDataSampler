@@ -600,14 +600,14 @@ class URREnergyDependent:
     
     def get_relative_uncertainty(self) -> List[float]:
         """
-        Returns a list of nominal parameter values that have uncertainty information and are 
-        therefore included in the covariance matrix.
+        Returns a list of relative uncertainties (as fractions, not percentages) for parameters 
+        that have uncertainty information and are included in the covariance matrix.
         
         Returns:
         --------
-        List[float] : List of nominal parameter values for all resonances that have uncertainties
+        List[float] : List of relative uncertainties (uncertainty/nominal) for all resonances
         """
-        correlated_params = []
+        relative_uncertainties = []
         
         # Loop through all L-groups
         for l_group in self.Llist:
@@ -624,8 +624,42 @@ class URREnergyDependent:
                         (resonance.GX[0] if resonance.GX is not None else None, resonance.DGX)
                     ]
                     
-                    for value, uncertainty in params_with_uncertainty:
-                        if value is not None and uncertainty is not None and uncertainty > 0:
-                            correlated_params.append(value)
+                    for nominal_value, absolute_uncertainty in params_with_uncertainty:
+                        if nominal_value is not None and absolute_uncertainty is not None and absolute_uncertainty > 0:
+                            # Calculate relative uncertainty: uncertainty / nominal_value
+                            relative_unc = absolute_uncertainty / abs(nominal_value) if abs(nominal_value) > 1e-20 else 0.0
+                            relative_uncertainties.append(relative_unc)
         
-        return correlated_params
+        return relative_uncertainties
+    
+    def get_nominal_values(self) -> List[float]:
+        """
+        Returns a list of nominal parameter values that have uncertainty information and are 
+        therefore included in the covariance matrix.
+        
+        Returns:
+        --------
+        List[float] : List of nominal parameter values for all resonances that have uncertainties
+        """
+        nominal_values = []
+        
+        # Loop through all L-groups
+        for l_group in self.Llist:
+            # Loop through all resonances in this L-group
+            for j_group in l_group.Jlist:
+                for resonance in j_group.RP:
+                
+                    # Add parameters with uncertainty information (non-None)
+                    params_with_uncertainty = [
+                        (resonance.D[0], resonance.DD),
+                        (resonance.GN[0] if resonance.GN is not None else None, resonance.DGN),
+                        (resonance.GG[0] if resonance.GG is not None else None, resonance.DGG),
+                        (resonance.GF[0] if resonance.GF is not None else None, resonance.DGF),
+                        (resonance.GX[0] if resonance.GX is not None else None, resonance.DGX)
+                    ]
+                    
+                    for nominal_value, absolute_uncertainty in params_with_uncertainty:
+                        if nominal_value is not None and absolute_uncertainty is not None and absolute_uncertainty > 0:
+                            nominal_values.append(nominal_value)
+        
+        return nominal_values

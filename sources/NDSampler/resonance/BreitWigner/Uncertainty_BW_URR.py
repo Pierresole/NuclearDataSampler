@@ -41,6 +41,45 @@ class Uncertainty_BW_URR(ResonanceRangeCovariance):
         self.compute_L_matrix()
         print(f"Time for compute_L_matrix: {time.time() - start_time:.4f} seconds")
         
+        # Check for unusually high relative uncertainties and warn the user
+        self._check_high_uncertainties()
+        
+    
+    def _check_high_uncertainties(self, threshold=1.0):
+        """
+        Check for unusually high relative uncertainties (> threshold, e.g., 100%) and warn the user.
+        
+        Parameters:
+        -----------
+        threshold : float
+            Relative uncertainty threshold (1.0 = 100%) above which to warn
+        """
+        rel_uncertainties = np.array(self.urre_data.get_relative_uncertainty())
+        high_uncertainty_indices = np.where(rel_uncertainties > threshold)[0]
+        
+        if len(high_uncertainty_indices) > 0:
+            print(f"\n⚠️  WARNING: Found {len(high_uncertainty_indices)} parameters with unusually high relative uncertainties (>{threshold*100:.0f}%):")
+            
+            # Get parameter information for warning
+            param_count = 0
+            for l_idx, l_value in enumerate(self.urre_data.Llist):
+                for j_idx, j_value in enumerate(l_value.Jlist):
+                    for e_idx, rp in enumerate(j_value.RP):
+                        param_info = [
+                            ('D', rp.DD), ('GN', rp.DGN), ('GG', rp.DGG), 
+                            ('GF', rp.DGF), ('GX', rp.DGX)
+                        ]
+                        
+                        for param_name, uncertainty in param_info:
+                            if uncertainty is not None and uncertainty > 0:
+                                if param_count in high_uncertainty_indices:
+                                    rel_unc_percent = rel_uncertainties[param_count] * 100
+                                    print(f"   {param_name}_L{l_idx}_J{j_idx}_E{e_idx}: {rel_unc_percent:.1f}% relative uncertainty")
+                                param_count += 1
+            
+            print("   Consider reviewing these uncertainties - they may indicate data quality issues.")
+            print("   Parameters with >100% uncertainty can lead to unphysical negative samples.\n")
+    
     
     def get_covariance_type(self):
         """
@@ -69,8 +108,15 @@ class Uncertainty_BW_URR(ResonanceRangeCovariance):
                                                                   fully_correlated_energies=False)
         
         rel_std_dev_vector = np.array(self.urre_data.get_relative_uncertainty())
+        
+        # Store both the correlation matrix and standard deviations separately
+        # This avoids numerical issues from converting back and forth
+        super().__setattr__('correlation_matrix', expanded_rel_cov_matrix)
+        super().__setattr__('std_dev_vector', rel_std_dev_vector)
+        super().__setattr__('mean_vector', np.zeros(len(rel_std_dev_vector)))  # Zero mean for relative perturbations
+        
+        # Still compute absolute covariance for compatibility, but use correlation matrix for sampling
         covariance_matrix = expanded_rel_cov_matrix * np.outer(rel_std_dev_vector, rel_std_dev_vector)
-
         super().__setattr__('covariance_matrix', covariance_matrix)
     
     
@@ -228,50 +274,80 @@ class Uncertainty_BW_URR(ResonanceRangeCovariance):
                                 continue
                             
                             # Get the nominal value
-                            nominal_value = param_list[0]
+                            nominal_value = float(param_list[0])
                             
                             # Apply the sample if we have enough samples
                             if sample_index < len(current_samples):
-                                # For copula-based samples, transform uniform values to appropriate distribution
-                                if use_copula:
-                                    # Get the uniform value
-                                    u_value = current_samples[sample_index]
-                                    
-                                    # Ensure the uniform value is in a safe range for ppf transformation
-                                    u_value = np.clip(u_value, 0.001, 0.999)
-                                    
-                                    if constraint_type == 'positive' and nominal_value > 0:
-                                        # For positive parameters, use truncated normal
-                                        # Calculate lower bound in standard units to prevent negative values
-                                        a = -nominal_value / uncertainty
+                                try:
+                                    # For copula-based samples, transform uniform values to appropriate distribution
+                                    if use_copula:
+                                        # Get the uniform value
+                                        u_value = current_samples[sample_index]
                                         
-                                        # Adjust for significant truncation
-                                        if a > -10:
-                                            # Calculate adjusted mean and scale for truncnorm
-                                            loc = self.calculate_adjusted_mean(0.0, a)
-                                            scale = self.calculate_adjusted_sigma(1.0, a, 10.0, loc)
-                                            z_value = truncnorm.ppf(u_value, a - loc, 10.0 - loc, loc=loc, scale=scale)
-                                        else:
-                                            # No significant truncation needed
+                                        # Ensure the uniform value is in a safe range for ppf transformation
+                                        u_value = np.clip(u_value, 0.001, 0.999)
+                                        
+                                        if constraint_type == 'positive' and float(nominal_value) > 0:
+                                            # Simple approach: use standard normal and reject negative values
                                             z_value = norm.ppf(u_value)
+                                        else:
+                                            # For parameters that can be negative, use standard normal
+                                            z_value = norm.ppf(u_value)
+                                        
+                                        # Apply the sample as deviation
+                                        sampled_value = float(nominal_value) + z_value * float(uncertainty)
+                                        
+                                        # For positive parameters, reject negative values and resample
+                                        if constraint_type == 'positive' and sampled_value <= 0:
+                                            max_attempts = 10
+                                            attempt = 0
+                                            while sampled_value <= 0 and attempt < max_attempts:
+                                                # Resample with new random value
+                                                u_new = np.random.uniform(0.001, 0.999)
+                                                z_new = norm.ppf(u_new)
+                                                sampled_value = float(nominal_value) + z_new * float(uncertainty)
+                                                attempt += 1
+                                            
+                                            # If still negative after max attempts, use a small positive value
+                                            if sampled_value <= 0:
+                                                sampled_value = max(1e-10, float(nominal_value) * 0.001)
+                                                if debug:
+                                                    print(f"Warning: Could not generate positive sample for {param_name}, using minimum value {sampled_value}")
                                     else:
-                                        # For parameters that can be negative, use standard normal
-                                        z_value = norm.ppf(u_value)
+                                        # NEW APPROACH: Samples are relative perturbations (in same units as rel_std_dev_vector)
+                                        sample = float(current_samples[sample_index])
+                                        
+                                        # Apply as multiplicative relative perturbation: nominal * (1 + relative_perturbation)
+                                        sampled_value = float(nominal_value) * (1.0 + sample)
+                                        
+                                        # For positive parameters, reject negative values
+                                        if constraint_type == 'positive' and sampled_value <= 0:
+                                            max_attempts = 10
+                                            attempt = 0
+                                            while sampled_value <= 0 and attempt < max_attempts:
+                                                # Generate new relative perturbation
+                                                new_sample = np.random.normal() * abs(sample)  # Same magnitude, new direction
+                                                sampled_value = float(nominal_value) * (1.0 + new_sample)
+                                                attempt += 1
+                                            
+                                            # If still negative, use minimum positive value
+                                            if sampled_value <= 0:
+                                                sampled_value = max(1e-10, float(nominal_value) * 0.001)
+                                                if debug:
+                                                    print(f"Warning: Could not generate positive sample for {param_name}, using minimum value {sampled_value}")
                                     
-                                    # Apply the sample as deviation
-                                    sampled_value = nominal_value + z_value * uncertainty
-                                else:
-                                    # Standard approach - samples are already z-values
-                                    sample = current_samples[sample_index]
+                                    # Apply constraints for positive parameters (final safety check)
+                                    if constraint_type == 'positive' and float(nominal_value) > 0:
+                                        # Ensure positive values with a minimum threshold
+                                        min_value = max(1e-10, float(nominal_value) * 0.001)
+                                        sampled_value = max(sampled_value, min_value)
                                     
-                                    # Apply absolute uncertainty to the nominal value
-                                    sampled_value = nominal_value + sample * uncertainty
-                                
-                                # Apply constraints for positive parameters
-                                if constraint_type == 'positive' and nominal_value > 0:
-                                    # Ensure positive values with a minimum threshold
-                                    min_value = max(1e-10, nominal_value * 0.001)
-                                    sampled_value = max(sampled_value, min_value)
+                                except Exception as e:
+                                    print(f"Error in sampling parameter {param_name}: {e}")
+                                    print(f"  nominal_value: {nominal_value}, type: {type(nominal_value)}")
+                                    print(f"  uncertainty: {uncertainty}, type: {type(uncertainty)}")
+                                    print(f"  sample: {current_samples[sample_index]}, type: {type(current_samples[sample_index])}")
+                                    raise
                                 
                                 # Store transformed sample for debug output
                                 if debug:

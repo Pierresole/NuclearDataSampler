@@ -94,21 +94,21 @@ class CovarianceBase(ABC):
             
     def compute_L_matrix(self, method='svd'):
         # Use self.correlation_matrix if it exists, otherwise compute from covariance_matrix
-        corr_matrix = self.correlation_matrix
-        # if hasattr(self, 'correlation_matrix') and self.correlation_matrix is not None:
-        #     corr_matrix = self.correlation_matrix
-        # else:
-        #     std_devs = np.sqrt(np.diag(self.covariance_matrix))
-        #     n_params = len(std_devs)
-        #     # Create correlation matrix
-        #     corr_matrix = np.zeros_like(self.covariance_matrix)
-        #     for i in range(n_params):
-        #         for j in range(n_params):
-        #             if std_devs[i] > 0 and std_devs[j] > 0:
-        #                 corr_matrix[i, j] = self.covariance_matrix[i, j] / (std_devs[i] * std_devs[j])
-        #             else:
-        #                 # Handle zero standard deviations - set correlation to 0
-        #                 corr_matrix[i, j] = 0.0 if i != j else 1.0
+        # corr_matrix = self.correlation_matrix
+        if hasattr(self, 'correlation_matrix') and self.correlation_matrix is not None:
+            corr_matrix = self.correlation_matrix
+        else:
+            std_devs = np.sqrt(np.diag(self.covariance_matrix))
+            n_params = len(std_devs)
+            # Create correlation matrix
+            corr_matrix = np.zeros_like(self.covariance_matrix)
+            for i in range(n_params):
+                for j in range(n_params):
+                    if std_devs[i] > 0 and std_devs[j] > 0:
+                        corr_matrix[i, j] = self.covariance_matrix[i, j] / (std_devs[i] * std_devs[j])
+                    else:
+                        # Handle zero standard deviations - set correlation to 0
+                        corr_matrix[i, j] = 0.0 if i != j else 1.0
         try:
             if method == 'cholesky':
                 # Try Cholesky decomposition
@@ -336,86 +336,16 @@ class CovarianceBase(ABC):
         return mu_ln, sigma_ln
         
         
+    @staticmethod
     def calculate_adjusted_mean(nominal, a, tol=1e-12, maxiter=100):
         """
-        Find loc such that 
-            loc + pdf(a-loc)/(1-cdf(a-loc)) = 0
-        using Newton's method.
-
-        Parameters
-        ----------
-        nominal : float
-            (Not used in the equation but kept for signature consistency.)
-        a : float
-            Lower truncation bound in standard units.
-        tol : float
-            Convergence tolerance on loc.
-        maxiter : int
-            Maximum Newton iterations.
-
-        Returns
-        -------
-        loc : float
-            The shift parameter for truncnorm so that the truncated mean is zero.
+        DISABLED: This method was causing infinite loops and performance issues.
+        Now returns 0.0 immediately instead of using Newton method.
+        
+        Original: Find loc such that loc + pdf(a-loc)/(1-cdf(a-loc)) = 0
         """
-        from scipy.stats import norm
-        import numpy as np
-
-        # define g(loc) and g'(loc)
-        def g(loc):
-            l = a - loc
-            # Add safety check for numerical issues
-            if l > 8:  # Far in the tail
-                return loc  # Truncation effect is negligible
-            return loc + norm.pdf(l)/(1 - norm.cdf(l))
-
-        def g_prime(loc):
-            l = a - loc
-            # Add safety check for numerical issues
-            if l > 8:  # Far in the tail
-                return 1.0  # Truncation effect is negligible
-            lam = norm.pdf(l)/(1 - norm.cdf(l))
-            lam_prime = -l*lam - lam*lam
-            return 1 - lam_prime
-
-        # Improved initial guess
-        if a <= -5:  # Extreme negative truncation
-            loc = 0.0  # Standard normal is fine
-        elif a <= 0:
-            loc = a/3.0  # Empirical heuristic
-        else:
-            loc = a*0.6  # Empirical heuristic
-        
-        # Track iterations for debugging
-        iters = 0
-        
-        for i in range(maxiter):
-            iters += 1
-            f = g(loc)
-            fp = g_prime(loc)
-            
-            # Prevent division by extremely small values
-            if abs(fp) < 1e-10:
-                fp = np.sign(fp) * 1e-10
-                
-            step = f/fp
-            
-            # Dampen step size for stability
-            if abs(step) > 1.0:
-                step *= 0.5
-                
-            loc_new = loc - step
-            
-            # Check for convergence
-            if abs(step) < tol:
-                return loc_new
-                
-            # Update loc
-            loc = loc_new
-            
-        # If we get here, we didn't converge
-        print(f"Warning: Newton method did not converge after {iters} iterations. a={a}, nominal={nominal}, last loc={loc}")
-        return loc  # Return best estimate anyway
+        # Simply return 0.0 to disable truncation adjustment
+        return 0.0
 
 
     # def calculate_adjusted_sigma(self, sigma, a, nominal_value, loc):
@@ -640,10 +570,17 @@ class CovarianceBase(ABC):
             samples = u_correlated
             self.sampled_uniform_values = u_correlated
         else:
-            # Standard approach - apply correlation structure directly
+            # Standard approach - apply correlation structure directly to generate relative perturbations
             samples = np.zeros((batch_size, n_params))
             for i in range(batch_size):
-                samples[i] = self.mean_vector + self.L_matrix @ z[i]
+                if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
+                    # Generate correlated standard normal samples, then scale by standard deviations
+                    # This gives relative perturbations (in same units as std_dev_vector)
+                    correlated_normal = self.L_matrix @ z[i]
+                    samples[i] = self.std_dev_vector * correlated_normal
+                else:
+                    # Fallback to original approach
+                    samples[i] = self.mean_vector + self.L_matrix @ z[i]
         
         self.sampled_values = samples
         
