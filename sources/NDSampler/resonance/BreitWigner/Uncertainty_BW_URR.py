@@ -118,6 +118,10 @@ class Uncertainty_BW_URR(ResonanceRangeCovariance):
         # Still compute absolute covariance for compatibility, but use correlation matrix for sampling
         covariance_matrix = expanded_rel_cov_matrix * np.outer(rel_std_dev_vector, rel_std_dev_vector)
         super().__setattr__('covariance_matrix', covariance_matrix)
+        
+        # DIRECT ALGORITHM: Use Cholesky decomposition of the relative covariance matrix
+        # This implements the superior approach validated in the notebook
+        self.compute_L_matrix(method='cholesky')
     
     
     def expand_relative_covariance(self, LJ_structure, relative_cov_matrix, MPAR=2, fully_correlated_energies=True):
@@ -279,69 +283,27 @@ class Uncertainty_BW_URR(ResonanceRangeCovariance):
                             # Apply the sample if we have enough samples
                             if sample_index < len(current_samples):
                                 try:
-                                    # For copula-based samples, transform uniform values to appropriate distribution
+                                    # Get the relative deviation (z_rel) from the sample
                                     if use_copula:
-                                        # Get the uniform value
-                                        u_value = current_samples[sample_index]
-                                        
-                                        # Ensure the uniform value is in a safe range for ppf transformation
-                                        u_value = np.clip(u_value, 0.001, 0.999)
-                                        
-                                        if constraint_type == 'positive' and float(nominal_value) > 0:
-                                            # Simple approach: use standard normal and reject negative values
-                                            z_value = norm.ppf(u_value)
-                                        else:
-                                            # For parameters that can be negative, use standard normal
-                                            z_value = norm.ppf(u_value)
-                                        
-                                        # Apply the sample as deviation
-                                        sampled_value = float(nominal_value) + z_value * float(uncertainty)
-                                        
-                                        # For positive parameters, reject negative values and resample
-                                        if constraint_type == 'positive' and sampled_value <= 0:
-                                            max_attempts = 10
-                                            attempt = 0
-                                            while sampled_value <= 0 and attempt < max_attempts:
-                                                # Resample with new random value
-                                                u_new = np.random.uniform(0.001, 0.999)
-                                                z_new = norm.ppf(u_new)
-                                                sampled_value = float(nominal_value) + z_new * float(uncertainty)
-                                                attempt += 1
-                                            
-                                            # If still negative after max attempts, use a small positive value
-                                            if sampled_value <= 0:
-                                                sampled_value = max(1e-10, float(nominal_value) * 0.001)
-                                                if debug:
-                                                    print(f"Warning: Could not generate positive sample for {param_name}, using minimum value {sampled_value}")
+                                        # Transform uniform to standard normal
+                                        u_value = np.clip(current_samples[sample_index], 0.001, 0.999)
+                                        z_rel = norm.ppf(u_value)
                                     else:
-                                        # NEW APPROACH: Samples are relative perturbations (in same units as rel_std_dev_vector)
-                                        sample = float(current_samples[sample_index])
-                                        
-                                        # Apply as multiplicative relative perturbation: nominal * (1 + relative_perturbation)
-                                        sampled_value = float(nominal_value) * (1.0 + sample)
-                                        
-                                        # For positive parameters, reject negative values
-                                        if constraint_type == 'positive' and sampled_value <= 0:
-                                            max_attempts = 10
-                                            attempt = 0
-                                            while sampled_value <= 0 and attempt < max_attempts:
-                                                # Generate new relative perturbation
-                                                new_sample = np.random.normal() * abs(sample)  # Same magnitude, new direction
-                                                sampled_value = float(nominal_value) * (1.0 + new_sample)
-                                                attempt += 1
-                                            
-                                            # If still negative, use minimum positive value
-                                            if sampled_value <= 0:
-                                                sampled_value = max(1e-10, float(nominal_value) * 0.001)
-                                                if debug:
-                                                    print(f"Warning: Could not generate positive sample for {param_name}, using minimum value {sampled_value}")
+                                        # Sample is already a relative deviation from Cholesky decomposition
+                                        z_rel = float(current_samples[sample_index])
                                     
-                                    # Apply constraints for positive parameters (final safety check)
-                                    if constraint_type == 'positive' and float(nominal_value) > 0:
-                                        # Ensure positive values with a minimum threshold
-                                        min_value = max(1e-10, float(nominal_value) * 0.001)
-                                        sampled_value = max(sampled_value, min_value)
+                                    # DIRECT ALGORITHM: sampled = nominal * (1 + z_rel)
+                                    # This is the mathematically correct approach validated in the notebook
+                                    sampled_value = float(nominal_value) * (1.0 + z_rel)
                                     
+                                    # For positive parameters, ensure physical values
+                                    if constraint_type == 'positive' and sampled_value <= 0:
+                                        # For URR parameters, negative values are unphysical
+                                        # Use a small positive fraction of the nominal value
+                                        sampled_value = max(1e-10, float(nominal_value) * 0.001)
+                                        if debug:
+                                            print(f"Warning: Negative sample for {param_name}, using minimum value {sampled_value}")
+                                
                                 except Exception as e:
                                     print(f"Error in sampling parameter {param_name}: {e}")
                                     print(f"  nominal_value: {nominal_value}, type: {type(nominal_value)}")
