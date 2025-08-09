@@ -8,38 +8,39 @@ class LegendreCoefficient:
     mt: int
     order: int
     energies: List[float] = field(default_factory=list)
-    legcoeff: List[List[float]] = field(default_factory=list)  # legcoeff[sample_index][energy_bin] - actual coefficients
-    std_dev: List[float] = field(default_factory=list)  # std_dev[energy_bin] - standard deviations
-    factor: List[List[float]] = field(default_factory=list)  # factor[sample_index][energy_bin] - kept for backward compatibility
+    # Absolute coefficients per sample (index 0 nominal); non-nominal kept None when using relative deviations
+    legcoeff: List[List[float]] = field(default_factory=list)
+    std_dev: List[float] = field(default_factory=list)
+    factor: List[List[float]] = field(default_factory=list)  # Backward compatibility (multiplicative factors)
+    rel_deviation: List[List[float]] = field(default_factory=list)  # δ = relative deviation per sample/bin
     constraints: Optional[dict] = None
+    # Indices of bins (within this coefficient's energy grid) that have non-zero std_dev
+    active_bin_indices: List[int] = field(default_factory=list)
+    # Indices of bins with zero variance (std_dev == 0) retained for reconstruction with zero perturbation
+    zero_variance_bins: List[int] = field(default_factory=list)
 
     def get_coefficients_for_sample(self, sample_index: int) -> List[float]:
-        """Get actual Legendre coefficients for a given sample index."""
         if sample_index == 0:
-            # Sample index 0 is always the nominal case
             return self.legcoeff[0] if self.legcoeff else []
-        elif len(self.legcoeff) > sample_index and self.legcoeff[sample_index] is not None:
+        if sample_index < len(self.legcoeff) and self.legcoeff[sample_index] is not None:
             return self.legcoeff[sample_index]
-        else:
-            # ERROR: Sample was not generated or is invalid
-            raise ValueError(f"Sample index {sample_index} not available for Legendre order {self.order}. "
-                           f"Available samples: 0-{len(self.legcoeff)-1} (excluding None entries)")
-    
+        if sample_index < len(self.rel_deviation) and self.rel_deviation[sample_index] is not None:
+            nominal = self.legcoeff[0]
+            delta = self.rel_deviation[sample_index]
+            return [nominal[i] * (1.0 + delta[i]) for i in range(len(nominal))]
+        raise ValueError(f"Sample index {sample_index} not available for Legendre order {self.order}.")
+
     def get_factors_for_sample(self, sample_index: int) -> List[float]:
-        """Get multiplicative factors for a given sample index.""" 
         if sample_index == 0:
-            # Sample index 0 is always the nominal case (factors = 1.0)
             n_bins = len(self.energies) - 1 if self.energies else 0
             return [1.0] * n_bins
-        elif len(self.factor) > sample_index and self.factor[sample_index] is not None:
+        if sample_index < len(self.factor) and self.factor[sample_index] is not None:
             return self.factor[sample_index]
-        else:
-            # ERROR: Sample was not generated or is invalid
-            raise ValueError(f"Factor for sample index {sample_index} not available for Legendre order {self.order}. "
-                           f"Available samples: 0-{len(self.factor)-1} (excluding None entries)")
-    
+        if sample_index < len(self.rel_deviation) and self.rel_deviation[sample_index] is not None:
+            return [1.0 + d for d in self.rel_deviation[sample_index]]
+        raise ValueError(f"Factor for sample index {sample_index} not available for Legendre order {self.order}.")
+
     def get_standard_deviations(self) -> List[float]:
-        """Get standard deviations for each energy bin."""
         return self.std_dev
 
     def write_to_hdf5(self, hdf5_group):
@@ -47,28 +48,23 @@ class LegendreCoefficient:
         grp.attrs['mt'] = self.mt
         grp.attrs['order'] = self.order
         grp.create_dataset('energies', data=self.energies)
-        grp.create_dataset('legcoeff', data=np.array(self.legcoeff))  # Store actual coefficients
-        grp.create_dataset('std_dev', data=np.array(self.std_dev))  # Store standard deviations
-        grp.create_dataset('factor', data=np.array(self.factor))  # Keep for backward compatibility
-        # Optionally store constraints as attributes if needed
+        grp.create_dataset('legcoeff', data=np.array(self.legcoeff))
+        grp.create_dataset('std_dev', data=np.array(self.std_dev))
+        grp.create_dataset('factor', data=np.array(self.factor))
+        if self.rel_deviation:
+            grp.create_dataset('rel_deviation', data=np.array(self.rel_deviation))
 
     @classmethod
     def read_from_hdf5(cls, hdf5_group):
-        # hdf5_group is the group for this L
         mt = hdf5_group.attrs['mt']
         order = hdf5_group.attrs['order']
         energies = hdf5_group['energies'][()].tolist()
-        
-        # Read new coefficient data
         legcoeff = hdf5_group['legcoeff'][()].tolist() if 'legcoeff' in hdf5_group else []
         std_dev = hdf5_group['std_dev'][()].tolist() if 'std_dev' in hdf5_group else []
-        
-        # Keep backward compatibility
         factor = hdf5_group['factor'][()].tolist() if 'factor' in hdf5_group else []
-        
-        # Optionally read constraints
-        return cls(mt=mt, order=order, energies=energies, legcoeff=legcoeff, 
-                  std_dev=std_dev, factor=factor)
+        rel_deviation = hdf5_group['rel_deviation'][()].tolist() if 'rel_deviation' in hdf5_group else []
+        return cls(mt=mt, order=order, energies=energies, legcoeff=legcoeff, std_dev=std_dev,
+                   factor=factor, rel_deviation=rel_deviation)
 
 @dataclass
 class LegendreCoefficients:
@@ -86,11 +82,8 @@ class LegendreCoefficients:
         """
         coeffs = []
         
-        # Get the first reaction from MF34 (usually MT=2 elastic scattering)
-        mt2_reaction = mf34mt2.reactions.to_list()[0]
-        
         # Extract Legendre blocks from MF34
-        legendre_blocks = mt2_reaction.legendre_blocks.to_list()
+        legendre_blocks = mf34mt2.legendre_blocks.to_list()
         
         # Create a mapping from Legendre order to energy bins and relative covariance matrices
         order_to_data = {}
@@ -149,6 +142,22 @@ class LegendreCoefficients:
         # mf4_distributions = mf4mt2.distributions.legendre.angular_distributions.to_list()
         mf4_energies = [dist.incident_energy for dist in mf4_distributions]
         
+        # SAFEGUARD: verify covariance energy upper bounds do not exceed last nominal MF4 energy
+        if mf4_energies:
+            max_mf4_energy = mf4_energies[-1]
+            for order_tmp, cov_data_tmp in order_to_data.items():
+                try:
+                    cov_last = cov_data_tmp['energies'][-1]
+                except Exception:
+                    continue
+                if cov_last > max_mf4_energy:
+                    print(
+                        f"ERROR: Covariance energy upper bound {cov_last:.6e} eV for L={order_tmp} "
+                        f"exceeds last MF4 incident energy {max_mf4_energy:.6e} eV. Inconsistent file energy boundaries."
+                    )
+        else:
+            print("ERROR: No MF4 incident energies available for safeguard check.")
+
         # Store original MF4 data for interpolation (avoid overwriting during sampling)
         original_mf4_coefficients = []
         for dist in mf4_distributions:
@@ -190,6 +199,9 @@ class LegendreCoefficients:
                     std_dev=std_deviations,
                     factor=[[1.0] * n_bins]  # Initialize with nominal factors for backward compatibility
                 )
+                # Record active vs zero-variance bins for later pruning in sampling
+                coeff.active_bin_indices = [i for i, sd in enumerate(std_deviations) if sd > 0 and not np.isclose(sd, 0.0)]
+                coeff.zero_variance_bins = [i for i, sd in enumerate(std_deviations) if i not in coeff.active_bin_indices]
                 coeffs.append(coeff)
         
         return cls(coefficients=coeffs, original_mf4_energies=mf4_energies, original_mf4_coefficients=original_mf4_coefficients)

@@ -36,87 +36,100 @@ class Uncertainty_Angular(AngularDistributionCovariance):
         
         # Extract parameters and covariance matrices with existing approach
         start_time = time.time()
-        self.legendre_data = LegendreCoefficients.from_endftk(mf4mt, mf34mt)
+        # Get the first reaction mf34mt.reactions from MF34 (usually MT=2 elastic scattering, no cross covariance)
+        self.legendre_data = LegendreCoefficients.from_endftk(mf4mt, mf34mt.reactions.to_list()[0])
         print(f"Time for extracting coefficients and std deviations: {time.time() - start_time:.4f} seconds")
         
-        # If specific Legendre orders were requested, filter the data
-        if legendre_orders is not None:
-            self._filter_legendre_data_by_orders(legendre_orders)
-        
-        # Build the expanded covariance matrix and standard deviation vector from coefficient data
         start_time = time.time()
-        self._build_expanded_covariance_from_coefficients()
-        print(f"Time for building expanded covariance matrix: {time.time() - start_time:.4f} seconds")
+        self.extract_relcorr_matrix(mf34mt.reactions.to_list()[0])
+        print(f"Time for extracting covariance structure: {time.time() - start_time:.4f} seconds")
         
         # Compute Cholesky decomposition
         start_time = time.time()
+        # Before computing L, prune zero-variance rows/cols in the relative covariance matrix.
+        # Build a mask of parameters (energy-bin per order) with positive variance.
+        if hasattr(self, 'relative_covariance_matrix') and self.legendre_data is not None:
+            rel_cov = self.relative_covariance_matrix
+            # Variance per parameter is diagonal element
+            variances = np.diag(rel_cov)
+            self.active_parameter_indices = [i for i, v in enumerate(variances) if v > 0 and not np.isclose(v, 0.0)]
+            self.pruned_parameter_indices = [i for i in range(len(variances)) if i not in self.active_parameter_indices]
+            if self.pruned_parameter_indices:
+                print(f"Pruning {len(self.pruned_parameter_indices)} zero-variance parameters before Cholesky")
+                rel_cov_reduced = rel_cov[np.ix_(self.active_parameter_indices, self.active_parameter_indices)]
+                self.reduced_relative_covariance_matrix = rel_cov_reduced
+                # Replace matrix used for decomposition temporarily
+                super().__setattr__('relative_covariance_matrix', rel_cov_reduced)
         self.compute_L_matrix()
+        # Restore full matrix reference for potential downstream uses (keep reduced separately)
+        if hasattr(self, 'reduced_relative_covariance_matrix'):
+            super().__setattr__('relative_covariance_matrix_full', rel_cov)
         print(f"Time for compute_L_matrix (MT{mt_number}): {time.time() - start_time:.4f} seconds")
         
         print(f"✓ Created angular distribution uncertainty for MT{mt_number}")
         
-    def _build_expanded_covariance_from_coefficients(self):
-        """
-        Build the expanded absolute covariance matrix from the coefficient standard deviations.
-        The matrix dimension equals the total number of coefficients across all orders and energy bins.
-        """
-        # Count total number of coefficients
-        total_coeffs = 0
-        coeff_info = []  # Store (order, bin_idx, nominal_coeff, std_dev)
+    # def _build_expanded_covariance_from_coefficients(self):
+    #     """
+    #     Build the expanded absolute covariance matrix from the coefficient standard deviations.
+    #     The matrix dimension equals the total number of coefficients across all orders and energy bins.
+    #     """
+    #     # Count total number of coefficients
+    #     total_coeffs = 0
+    #     coeff_info = []  # Store (order, bin_idx, nominal_coeff, std_dev)
         
-        for coeff_data in self.legendre_data.coefficients:
-            order = coeff_data.order
-            nominal_coeffs = coeff_data.legcoeff[0] if coeff_data.legcoeff else []
-            std_devs = coeff_data.std_dev
+    #     for coeff_data in self.legendre_data.coefficients:
+    #         order = coeff_data.order
+    #         nominal_coeffs = coeff_data.legcoeff[0] if coeff_data.legcoeff else []
+    #         std_devs = coeff_data.std_dev
             
-            for bin_idx, (nominal, std) in enumerate(zip(nominal_coeffs, std_devs)):
-                coeff_info.append((order, bin_idx, nominal, std))
-                total_coeffs += 1
+    #         for bin_idx, (nominal, std) in enumerate(zip(nominal_coeffs, std_devs)):
+    #             coeff_info.append((order, bin_idx, nominal, std))
+    #             total_coeffs += 1
         
-        print(f"  Building expanded matrix for {total_coeffs} coefficients across {len(self.legendre_data.coefficients)} Legendre orders")
+    #     print(f"  Building expanded matrix for {total_coeffs} coefficients across {len(self.legendre_data.coefficients)} Legendre orders")
         
-        # Build the standard deviation vector
-        self.std_dev_vector = np.array([info[3] for info in coeff_info])  # Extract std_devs
+    #     # Build the standard deviation vector
+    #     self.std_dev_vector = np.array([info[3] for info in coeff_info])  # Extract std_devs
         
-        # For now, assume diagonal covariance (correlations between different orders/bins are ignored)
-        # This can be extended later to include off-diagonal terms
-        diagonal_variance = self.std_dev_vector ** 2
-        self.covariance_matrix = np.diag(diagonal_variance)
+    #     # For now, assume diagonal covariance (correlations between different orders/bins are ignored)
+    #     # This can be extended later to include off-diagonal terms
+    #     diagonal_variance = self.std_dev_vector ** 2
+    #     self.covariance_matrix = np.diag(diagonal_variance)
         
-        # Build correlation matrix for compute_L_matrix()
-        with np.errstate(divide='ignore', invalid='ignore'):
-            std_outer = np.outer(self.std_dev_vector, self.std_dev_vector)
-            self.correlation_matrix = np.divide(self.covariance_matrix, std_outer, 
-                                              out=np.zeros_like(self.covariance_matrix), 
-                                              where=std_outer!=0)
+    #     # Build correlation matrix for compute_L_matrix()
+    #     with np.errstate(divide='ignore', invalid='ignore'):
+    #         std_outer = np.outer(self.std_dev_vector, self.std_dev_vector)
+    #         self.correlation_matrix = np.divide(self.covariance_matrix, std_outer, 
+    #                                           out=np.zeros_like(self.covariance_matrix), 
+    #                                           where=std_outer!=0)
             
-        print(f"  Standard deviation vector: {self.std_dev_vector}")
-        print(f"  Covariance matrix shape: {self.covariance_matrix.shape}")
+    #     print(f"  Standard deviation vector: {self.std_dev_vector}")
+    #     print(f"  Covariance matrix shape: {self.covariance_matrix.shape}")
         
-        # Store coefficient mapping for sampling
-        self.coefficient_info = coeff_info
+    #     # Store coefficient mapping for sampling
+    #     self.coefficient_info = coeff_info
         
-    def _filter_legendre_data_by_orders(self, requested_orders):
-        """
-        Filter the Legendre coefficient data to only include specified orders.
+    # def _filter_legendre_data_by_orders(self, requested_orders):
+    #     """
+    #     Filter the Legendre coefficient data to only include specified orders.
         
-        Parameters:
-        - requested_orders: List of Legendre orders to keep
-        """
-        if self.legendre_data and self.legendre_data.coefficients:
-            filtered_coefficients = []
-            for coeff in self.legendre_data.coefficients:
-                if coeff.order in requested_orders:
-                    filtered_coefficients.append(coeff)
-                    print(f"  Keeping Legendre order L={coeff.order} as specified in covariance dict")
-                else:
-                    print(f"  Skipping Legendre order L={coeff.order} (not in covariance dict)")
+    #     Parameters:
+    #     - requested_orders: List of Legendre orders to keep
+    #     """
+    #     if self.legendre_data and self.legendre_data.coefficients:
+    #         filtered_coefficients = []
+    #         for coeff in self.legendre_data.coefficients:
+    #             if coeff.order in requested_orders:
+    #                 filtered_coefficients.append(coeff)
+    #                 print(f"  Keeping Legendre order L={coeff.order} as specified in covariance dict")
+    #             else:
+    #                 print(f"  Skipping Legendre order L={coeff.order} (not in covariance dict)")
             
-            # Update the coefficients list
-            self.legendre_data.coefficients = filtered_coefficients
+    #         # Update the coefficients list
+    #         self.legendre_data.coefficients = filtered_coefficients
             
-            if not filtered_coefficients:
-                print(f"Warning: No Legendre coefficients remain after filtering by orders {requested_orders}")
+    #         if not filtered_coefficients:
+    #             print(f"Warning: No Legendre coefficients remain after filtering by orders {requested_orders}")
         
         
     def get_covariance_type(self):
@@ -273,19 +286,9 @@ class Uncertainty_Angular(AngularDistributionCovariance):
             if l != l1:
                 # Fill symmetric block
                 full_rel_cov[(l1-1)*N:l1*N, (l-1)*N:l*N] = mat_expanded.T
-
-        diag = np.diag(full_rel_cov)
-        relstd = np.sqrt(np.maximum(diag, 0))
-        # Avoid division by zero
-        with np.errstate(divide='ignore', invalid='ignore'):
-            relcorr_matrix = full_rel_cov / np.outer(relstd, relstd)
-            relcorr_matrix[~np.isfinite(relcorr_matrix)] = 0.0
-
-        self.std_dev_vector = relstd
         
-        self.energy_mesh = all_mesh
-        
-        super().__setattr__('correlation_matrix', relcorr_matrix)  # Store for compute_L_matrix()
+        super().__setattr__('relative_covariance_matrix', full_rel_cov)  # Store for compute_L_matrix()
+
 
     def _apply_samples(self, samples, mode="stack", use_copula=False, batch_size=1, 
                       sampling_method="Simple", debug=False):
@@ -293,20 +296,49 @@ class Uncertainty_Angular(AngularDistributionCovariance):
         Apply generated samples to the Legendre coefficients.
         Each sample is a vector of z-values or uniform values (if copula).
         
-        NEW APPROACH: Generate actual coefficient values instead of just factors.
+        UPDATED (Aug 2025): Store ONLY relative deviations δ such that
+            a_sample = a_nominal * (1 + δ)
+        Absolute coefficients are reconstructed lazily when requested.
         """
-        # Ensure samples is properly shaped
+        # Ensure samples is properly shaped (these samples correspond ONLY to active parameters, zero-variance pruned)
         if samples.ndim == 1:
-            samples = samples.reshape(1, -1)  # Make it (1, N) for single sample
-        
-        n_samples, n_params = samples.shape
+            samples = samples.reshape(1, -1)
+        n_samples, n_reduced_params = samples.shape
+        # Build mapping from global parameter index -> (coeff_obj, local_bin_index)
+        if not hasattr(self, 'parameter_index_map'):
+            self.parameter_index_map = []  # list of tuples (coeff, bin_idx)
+            for coeff in self.legendre_data.coefficients:
+                n_ebins = len(coeff.energies) - 1
+                for b in range(n_ebins):
+                    self.parameter_index_map.append((coeff, b))
+        # active_parameter_indices created during __init__ pruning
+        active_indices = getattr(self, 'active_parameter_indices', list(range(len(self.parameter_index_map))))
+        if n_reduced_params != len(active_indices):
+            # Fallback: derive active indices purely from non-zero std_dev in legendre_data
+            fallback_active = []
+            for idx, (coeff, bin_idx) in enumerate(self.parameter_index_map):
+                if coeff.std_dev and bin_idx < len(coeff.std_dev):
+                    if coeff.std_dev[bin_idx] > 0 and not np.isclose(coeff.std_dev[bin_idx], 0.0):
+                        fallback_active.append(idx)
+            if n_reduced_params == len(fallback_active):
+                if debug:
+                    print(f"⚠️  Active index mismatch detected (matrix-based={len(active_indices)} vs samples={n_reduced_params}). Using std_dev-based fallback active set of size {len(fallback_active)}.")
+                active_indices = fallback_active
+                self.active_parameter_indices = active_indices  # update for future calls
+                self.pruned_parameter_indices = [i for i in range(len(self.parameter_index_map)) if i not in active_indices]
+            else:
+                raise ValueError(
+                    f"Inconsistent active parameter counts: samples={n_reduced_params}, matrix-based={len(active_indices)}, std_dev-based={len(fallback_active)}"
+                )
         
         if debug:
             print(f"🔬 ANGULAR DISTRIBUTION DEBUG MODE - MT{self.MT}")
             print(f"{'='*60}")
             print(f"📊 Sampling Configuration:")
             print(f"   Number of samples: {n_samples}")
-            print(f"   Number of parameters: {n_params}")
+            print(f"   Number of active parameters (sampled): {n_reduced_params}")
+            if hasattr(self, 'pruned_parameter_indices'):
+                print(f"   Pruned zero-variance parameters: {len(self.pruned_parameter_indices)}")
             print(f"   Sampling method: {sampling_method}")
             print(f"   Use copula: {use_copula}")
             print(f"   Operation mode: {mode}")
@@ -314,68 +346,56 @@ class Uncertainty_Angular(AngularDistributionCovariance):
                 legendre_orders = [c.order for c in self.legendre_data.coefficients]
                 print(f"   Legendre orders: {legendre_orders}")
         
-        print(f"🚨 ANGULAR DEBUG: mode='{mode}', n_samples={n_samples}")
+        print(f"🚨 ANGULAR DEBUG (relative deviations): mode='{mode}', n_samples={n_samples}")
         
         # Clear existing samples if in replace mode (except nominal at index 0)
         if mode == 'replace':
             for coeff in self.legendre_data.coefficients:
-                if len(coeff.legcoeff) > 1:  # Keep nominal (index 0) if it exists
-                    coeff.legcoeff = coeff.legcoeff[:1]  # Keep only index 0 (nominal)
-                    coeff.factor = coeff.factor[:1] if len(coeff.factor) > 1 else coeff.factor
+                # Keep only nominal absolute coefficients; purge previous derived data
+                if len(coeff.legcoeff) > 1:
+                    coeff.legcoeff = coeff.legcoeff[:1]
+                if len(coeff.factor) > 1:
+                    coeff.factor = coeff.factor[:1]
+                coeff.rel_deviation = []  # reset relative deviations (index 0 not used)
         
         for sample_idx in range(n_samples):
-            sample = samples[sample_idx, :]  # Get 1D sample vector
-            param_offset = 0
-            
-            for coeff in self.legendre_data.coefficients:
-                n_ebins = len(coeff.energies) - 1
-                nominal_coeffs = np.array(coeff.legcoeff[0])  # Get nominal coefficients
-                std_devs = np.array(coeff.std_dev)  # Get standard deviations
-                
-                # Extract the relevant slice for this coefficient
-                zvals = sample[param_offset:param_offset + n_ebins]
-                
-                # For copula, zvals are uniform, transform to normal
+            reduced_sample = samples[sample_idx, :]
+            # Build full delta vector with zeros for pruned parameters
+            full_delta = np.zeros(len(self.parameter_index_map))
+            for local_pos, global_idx in enumerate(active_indices):
+                z = reduced_sample[local_pos]
                 if use_copula:
                     from scipy.stats import norm
-                    zvals = norm.ppf(zvals)
-                
-                # Generate perturbed coefficients: nominal + z * std_dev
-                perturbed_coeffs = nominal_coeffs + zvals * std_devs
-                
-                # Also compute multiplicative factors for backward compatibility
-                # Handle zero coefficients carefully
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    factors = np.divide(perturbed_coeffs, nominal_coeffs, 
-                                      out=np.ones_like(perturbed_coeffs), 
-                                      where=nominal_coeffs!=0)
-                
-                # Determine the effective sample index (skip nominal at index 0)
-                effective_sample_idx = sample_idx + 1
-                
-                # Store coefficients according to operation mode
+                    z = norm.ppf(z)
+                full_delta[global_idx] = z
+            # Distribute per coefficient using id-based index mapping (avoids unhashable object keys)
+            if not hasattr(self, '_coeff_id_to_index'):
+                self._coeff_id_to_index = {id(c): i for i, c in enumerate(self.legendre_data.coefficients)}
+            coeffs_list = self.legendre_data.coefficients
+            delta_arrays = [np.zeros(len(c.energies) - 1) for c in coeffs_list]
+            for idx, (coeff, bin_idx) in enumerate(self.parameter_index_map):
+                ci = self._coeff_id_to_index[id(coeff)]
+                delta_arrays[ci][bin_idx] = full_delta[idx]
+            effective_sample_idx = sample_idx + 1
+            for ci, coeff in enumerate(coeffs_list):
+                delta_arr = delta_arrays[ci]
+                factors = 1.0 + delta_arr
+                target_rel_dev = coeff.rel_deviation
+                target_factor = coeff.factor
                 if mode == 'stack':
-                    # Extend coefficient list if needed for stacking
-                    # FIXED: Use None placeholders instead of nominal coefficients
-                    while len(coeff.legcoeff) <= effective_sample_idx:
-                        coeff.legcoeff.append(None)  # Placeholder for ungenerated samples
-                    coeff.legcoeff[effective_sample_idx] = perturbed_coeffs.tolist()
-                    
-                    # Also store factors for backward compatibility
-                    while len(coeff.factor) <= effective_sample_idx:
-                        coeff.factor.append(None)  # Placeholder for ungenerated samples
-                    coeff.factor[effective_sample_idx] = factors.tolist()
-                    
+                    while len(target_rel_dev) <= effective_sample_idx:
+                        target_rel_dev.append(None)
+                    target_rel_dev[effective_sample_idx] = delta_arr.tolist()
+                    while len(target_factor) <= effective_sample_idx:
+                        target_factor.append(None)
+                    target_factor[effective_sample_idx] = factors.tolist()
                 elif mode == 'replace':
-                    # Append new sample (we already cleared old samples above)
-                    if effective_sample_idx < len(coeff.legcoeff):
-                        coeff.legcoeff[effective_sample_idx] = perturbed_coeffs.tolist()
-                        coeff.factor[effective_sample_idx] = factors.tolist()
-                    else:
-                        coeff.legcoeff.append(perturbed_coeffs.tolist())
-                        coeff.factor.append(factors.tolist())
-                        
-                param_offset += n_ebins
+                    while len(target_rel_dev) <= effective_sample_idx:
+                        target_rel_dev.append(None)
+                    target_rel_dev[effective_sample_idx] = delta_arr.tolist()
+                    while len(target_factor) <= effective_sample_idx:
+                        target_factor.append(None)
+                    target_factor[effective_sample_idx] = factors.tolist()
 
         # Perform debug verification if requested
         if debug and n_samples >= 10:  # Only verify if we have enough samples
@@ -384,13 +404,26 @@ class Uncertainty_Angular(AngularDistributionCovariance):
         elif debug and n_samples < 10:
             print(f"\n⚠️  Note: Statistical verification skipped (need ≥10 samples, got {n_samples})")
 
+
     def _verify_coefficient_sampling_statistics(self, debug=True):
         """
         Verify that the sampling statistics match the expected standard deviations.
         """
         if debug:
-            print("   Coefficient sampling verification not yet implemented")
-            print("   (This would check that sampled coefficients have correct std dev)")
+            # Aggregate relative deviations and compare to identity (since L_matrix encodes covariance)
+            all_deltas = []
+            for coeff in self.legendre_data.coefficients:
+                # Skip nominal (index 0)
+                for sidx in range(1, len(coeff.rel_deviation)):
+                    if sidx < len(coeff.rel_deviation) and coeff.rel_deviation[sidx] is not None:
+                        all_deltas.append(coeff.rel_deviation[sidx])
+            if not all_deltas:
+                print("   No relative deviations stored yet.")
+                return
+            delta_matrix = np.vstack(all_deltas)
+            sample_std = delta_matrix.std(axis=0, ddof=1)
+            print(f"   Relative deviation sample std (first 10): {sample_std[:10]}")
+
     
     @classmethod
     def read_from_hdf5(cls, hdf5_group):
@@ -432,6 +465,7 @@ class Uncertainty_Angular(AngularDistributionCovariance):
         
         return instance
 
+
     def write_additional_data_to_hdf5(self, hdf5_group):
         if self.legendre_data is not None:
             leg_group = hdf5_group.require_group('Parameters')
@@ -440,21 +474,34 @@ class Uncertainty_Angular(AngularDistributionCovariance):
         # Save the MT number as an attribute
         hdf5_group.attrs['MT'] = self.MT
 
+
     def update_tape(self, tape, sample_index=1, sample_name=""):
         """
         Updates the ENDF tape with sampled Legendre coefficients for the given sample_index.
         """
         from ENDFtk.MF4 import Section, LegendreDistributions, LegendreCoefficients, MixedDistributions
-        
-        # Reconstruct actual coefficients for this sample
-        updated_coefficients = self.legendre_data.reconstruct(sample_index)
-        
         # Parse the section to update (use dynamic MT number)
         mf4mt = tape.MAT(tape.material_numbers[0]).MF(4).MT(self.MT).parse()
-        
-        # Create perturbed LegendreDistributions
-        perturbed_legendre_dist = self._create_perturbed_legendre_distributions(
-            mf4mt, updated_coefficients)
+
+        # Build factor dictionary directly from stored relative deviations (δ) to avoid
+        # reconstructing absolute coefficients then re-dividing.
+        # factors = 1 + δ per covariance bin.
+        factors_dict = {}
+        for coeff_data in self.legendre_data.coefficients:
+            n_bins = len(coeff_data.energies) - 1
+            if sample_index < len(coeff_data.rel_deviation) and coeff_data.rel_deviation[sample_index] is not None:
+                delta = coeff_data.rel_deviation[sample_index]
+                # Safety: ensure correct length
+                if len(delta) != n_bins:
+                    # Pad or trim if mismatch
+                    adj = (delta + [0.0]*(n_bins - len(delta)))[:n_bins]
+                    delta = adj
+                factors_dict[coeff_data.order] = [1.0 + d for d in delta]
+            else:
+                # Nominal (or missing) => unity factors
+                factors_dict[coeff_data.order] = [1.0]*n_bins
+
+        perturbed_legendre_dist = self._create_perturbed_legendre_distributions_from_factors(mf4mt, factors_dict)
         
         # Handle mixed distributions (both Legendre and tabulated)
         if mf4mt.LTT == 3:
@@ -479,6 +526,84 @@ class Uncertainty_Angular(AngularDistributionCovariance):
         mat_num = tape.material_numbers[0]
         tape.MAT(mat_num).MF(4).insert_or_replace(new_section)
     
+    def _create_perturbed_legendre_distributions_from_factors(self, mf4mt, multiplicative_factors):
+        """Create perturbed Legendre distributions directly from bin-wise multiplicative factors.
+
+        Parameters
+        ----------
+        mf4mt : ENDFtk MF4 section (parsed)
+        multiplicative_factors : dict[int, list[float]]
+            Mapping Legendre order -> factor per covariance bin (length = n_bins for that order).
+        """
+        from ENDFtk.MF4 import LegendreDistributions, LegendreCoefficients
+
+        # Access original distributions (pure or mixed)
+        if mf4mt.LTT == 1:
+            original_dist = mf4mt.distributions
+        elif mf4mt.LTT == 3:
+            original_dist = mf4mt.distributions.legendre
+        original_distributions = original_dist.angular_distributions.to_list()
+        original_energies = [dist.incident_energy for dist in original_distributions]
+
+        # Collect all covariance bin boundaries across orders
+        covariance_boundaries = set()
+        order_to_boundaries = {}
+        for coeff_data in self.legendre_data.coefficients:
+            covariance_boundaries.update(coeff_data.energies)
+            order_to_boundaries[coeff_data.order] = coeff_data.energies
+        covariance_boundaries = sorted(covariance_boundaries)
+
+        # Union mesh of original + covariance boundaries
+        union_energies = self.mesh_union(original_energies, covariance_boundaries)
+
+        enhanced_energies = []
+        enhanced_coeffs_data = []
+
+        # Helper: fetch nominal coefficients at any energy
+        get_nominal = self.legendre_data.get_coefficients_at_energy
+
+        for energy in union_energies:
+            base_coeffs = get_nominal(energy)  # nominal L>=1 list
+            is_boundary = energy in covariance_boundaries
+            if is_boundary:
+                b_idx = covariance_boundaries.index(energy)
+                first = (b_idx == 0)
+                last = (b_idx == len(covariance_boundaries)-1)
+
+                def apply_bin(bin_idx):
+                    return self._apply_multiplicative_factors_to_coefficients(
+                        base_coeffs, multiplicative_factors, bin_index=bin_idx)
+
+                if first:
+                    # E0 nominal
+                    enhanced_energies.append(energy); enhanced_coeffs_data.append(base_coeffs.copy())
+                    # E0' first bin factors
+                    enhanced_energies.append(energy); enhanced_coeffs_data.append(apply_bin(0))
+                elif last:
+                    prev_bin = b_idx - 1
+                    pert = apply_bin(prev_bin)
+                    enhanced_energies.append(energy); enhanced_coeffs_data.append(pert)
+                    enhanced_energies.append(energy); enhanced_coeffs_data.append(pert.copy())
+                else:
+                    prev_bin = b_idx - 1
+                    next_bin = b_idx
+                    prev_coeffs = apply_bin(prev_bin)
+                    enhanced_energies.append(energy); enhanced_coeffs_data.append(prev_coeffs)
+                    enhanced_energies.append(energy); enhanced_coeffs_data.append(prev_coeffs.copy())
+                    next_coeffs = apply_bin(next_bin)
+                    enhanced_energies.append(energy); enhanced_coeffs_data.append(next_coeffs)
+            else:
+                bin_idx = self._find_bin_index_for_energy(energy, covariance_boundaries)
+                pert = self._apply_multiplicative_factors_to_coefficients(
+                    base_coeffs, multiplicative_factors, bin_index=bin_idx)
+                enhanced_energies.append(energy); enhanced_coeffs_data.append(pert)
+
+        enhanced_n_points = len(enhanced_energies)
+        new_boundaries = [enhanced_n_points]
+        new_interpolants = [2]
+        new_legendre_coeffs = [LegendreCoefficients(E, coeffs) for E, coeffs in zip(enhanced_energies, enhanced_coeffs_data)]
+        return LegendreDistributions(new_boundaries, new_interpolants, new_legendre_coeffs)
+
     def _create_perturbed_legendre_distributions(self, mf4mt, sample_coefficients_dict):
         """
         Create perturbed Legendre distributions using bin-wise multiplicative factors.
@@ -671,6 +796,7 @@ class Uncertainty_Angular(AngularDistributionCovariance):
         # print(f"    Created perturbed distributions with {enhanced_n_points} energy points (triplication applied)")
         return perturbed_legendre_dist
     
+
     def _apply_multiplicative_factors_to_coefficients(self, base_coeffs, multiplicative_factors, bin_index):
         """
         Apply bin-wise multiplicative factors to coefficients.
@@ -694,8 +820,8 @@ class Uncertainty_Angular(AngularDistributionCovariance):
                 if 0 <= bin_index < len(factors):
                     factor = factors[bin_index]
                     final_val = original_val * factor
-                    if l_order == 1:
-                        print(f"    Applying factor {factor} (original={original_val}, final={final_val})")
+                    # if l_order == 1:
+                    #     print(f"    Applying factor {factor} (original={original_val}, final={final_val})")
                 else:
                     final_val = original_val  # No factor for this bin
             else:
