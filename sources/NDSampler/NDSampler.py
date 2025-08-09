@@ -26,19 +26,19 @@ class SamplerSettings:
                              f"Valid options are: {', '.join(valid_sampling_methods)}")
 
 class NDSampler:
-    def __init__(self, endf_tape: Tape, covariance_dict: dict = None, settings: Optional[SamplerSettings] = None, hdf5_filename: Optional[str] = None):
-        
+    def __init__(self, endf_adress: str, covariance_dict: dict = None, settings: Optional[SamplerSettings] = None, hdf5_filename: Optional[str] = None):
+
         # Set the HDF5 filename
         self.hdf5_filename = hdf5_filename or f'covariance_data_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.hdf5'
         self.hdf5_file = h5py.File(self.hdf5_filename, 'w') if hdf5_filename is None else h5py.File(hdf5_filename, 'r')
 
-        self.original_tape = endf_tape
+        self.original_tape = Tape.from_file(endf_adress)
         
         # Convert settings dict to SamplerSettings dataclass
         self.settings = settings or SamplerSettings()
 
         if hdf5_filename is None:
-            self.covariance_dict = covariance_dict or generate_covariance_dict(endf_tape)
+            self.covariance_dict = covariance_dict or generate_covariance_dict(self.original_tape)
             # Initialize covariance objects based on covariance_dict
             self.covariance_objects: List[CovarianceBase] = []
             self._initialize_covariance_objects()
@@ -59,7 +59,9 @@ class NDSampler:
                         if MF == 31:
                             from .multiplicity.MultiplicityCovariance import MultiplicityCovariance
                             covariance_objects = []
-                            MultiplicityCovariance.fill_from_resonance_range(self.original_tape, covariance_objects)
+                            # Create a dictionary for this specific MT reaction
+                            mt_covariance_dict = {MT: value_list}
+                            MultiplicityCovariance.fill_from_multiplicity(self.original_tape, covariance_objects, mt_covariance_dict)
                             self.covariance_objects.extend(covariance_objects)
                             self._add_covariance_to_hdf5(covariance_objects, "Multiplicity")
                         elif MF == 32:
@@ -114,7 +116,7 @@ class NDSampler:
             group_name = covariance_type_name
             group = self.hdf5_file.require_group(group_name)
             subgroup_name = covariance_obj.get_covariance_type()
-            subgroup = group.create_group(subgroup_name)
+            subgroup = group.require_group(subgroup_name)
             covariance_obj.write_to_hdf5(subgroup)
                             
     @classmethod
@@ -207,6 +209,11 @@ def generate_covariance_dict(endf_tape):
             covariance_dict[MF] = {}
             # Loop over MT sections within the MF
             for MT in mf_section.section_numbers:
+                # Skip MT452 for MF=31 - total neutron multiplicity will be reconstructed
+                if MF == 31 and MT == 452:
+                    print(f"Skipping MF=31 MT=452 (total neutron multiplicity) - will be reconstructed from MT455 + MT456")
+                    continue
+                    
                 parsed_section = mf_section.MT(MT).parse()
                 if MF == 32:
                     # For MF=32, get the number of resonance ranges
