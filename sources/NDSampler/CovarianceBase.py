@@ -50,87 +50,103 @@ class CovarianceBase(ABC):
             
         if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
             self.std_dev_vector = np.delete(self.std_dev_vector, indices_to_delete)
-
-
-    # def remove_zero_variance_parameters(self):
-    #     """
-    #     Removes parameters with zero variance and updates the covariance matrix accordingly.
-    #     """
-    #     if self.covariance_matrix is None:
-    #         return
             
-    #     # Identify parameters with non-zero standard deviation
-    #     if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
-    #         non_zero_indices = np.where(self.std_dev_vector > 0)[0]
-    #     else:
-    #         non_zero_indices = np.where(np.diag(self.covariance_matrix) > 0)[0]
+    def compute_L_matrix(self, method='cholesky'):
+        """
+        Compute the L matrix for sampling using the direct relative covariance approach.
         
-    #     # If all parameters have non-zero variance, no need to filter
-    #     if len(non_zero_indices) == self.covariance_matrix.shape[0]:
-    #         return
+        For URR sampling, this uses the relative covariance matrix directly via Cholesky 
+        decomposition, implementing the superior algorithm: L_rel = cholesky(C_relative).
         
-    #     print(f"Removing {self.covariance_matrix.shape[0] - len(non_zero_indices)} parameters with zero variance")
-        
-    #     # Update parameters if they exist
-    #     if hasattr(self, 'parameters') and self.parameters is not None:
-    #         self.parameters = [self.parameters[i] for i in non_zero_indices]
-            
-    #     # Update vectors
-    #     if hasattr(self, 'mean_vector') and self.mean_vector is not None:
-    #         self.mean_vector = self.mean_vector[non_zero_indices]
-            
-    #     if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
-    #         self.std_dev_vector = self.std_dev_vector[non_zero_indices]
-            
-    #     # Update the covariance matrix
-    #     self.covariance_matrix = self.covariance_matrix[np.ix_(non_zero_indices, non_zero_indices)]
-        
-    #     # Update L_matrix if it exists
-    #     if hasattr(self, 'L_matrix') and self.L_matrix is not None:
-    #         # L_matrix needs to be recomputed with the updated covariance
-    #         self.compute_L_matrix()
-        
-    #     return non_zero_indices
-            
-    def compute_L_matrix(self, method='svd'):
-        # Use self.correlation_matrix if it exists, otherwise compute from covariance_matrix
-        # corr_matrix = self.correlation_matrix
+        Parameters:
+        -----------
+        method : str
+            Decomposition method ('cholesky', 'svd', or 'eigen')
+        """
+        # For URR classes, use the correlation_matrix directly (it's actually the relative covariance matrix)
+        # This implements the direct algorithm: L_rel = cholesky(C_relative)
         if hasattr(self, 'correlation_matrix') and self.correlation_matrix is not None:
-            corr_matrix = self.correlation_matrix
+            matrix_to_decompose = self.correlation_matrix
+        elif hasattr(self, 'relative_covariance_matrix'):
+            matrix_to_decompose = self.relative_covariance_matrix
         else:
+            # Fallback for other classes
             std_devs = np.sqrt(np.diag(self.covariance_matrix))
             n_params = len(std_devs)
             # Create correlation matrix
-            corr_matrix = np.zeros_like(self.covariance_matrix)
+            matrix_to_decompose = np.zeros_like(self.covariance_matrix)
             for i in range(n_params):
                 for j in range(n_params):
                     if std_devs[i] > 0 and std_devs[j] > 0:
-                        corr_matrix[i, j] = self.covariance_matrix[i, j] / (std_devs[i] * std_devs[j])
+                        matrix_to_decompose[i, j] = self.covariance_matrix[i, j] / (std_devs[i] * std_devs[j])
                     else:
                         # Handle zero standard deviations - set correlation to 0
-                        corr_matrix[i, j] = 0.0 if i != j else 1.0
+                        matrix_to_decompose[i, j] = 0.0 if i != j else 1.0
+        # Diagnostic: inspect negative eigenvalues (numerical indefiniteness) when using cholesky
+        if method == 'cholesky':
+            try:
+                eigvals = np.linalg.eigvalsh(matrix_to_decompose)
+                negative = eigvals[eigvals < 0]
+                if negative.size > 0:
+                    neg_sorted = np.sort(negative)
+                    k_show = min(10, neg_sorted.size)
+                    print("[L-MATRIX DIAGNOSTIC] Found", negative.size, "negative eigenvalues. Showing most negative up to", k_show)
+                    print("  Most negative eigenvalues:", neg_sorted[:k_show])
+                    print("  Smallest abs(neg):", np.min(np.abs(negative)), " Largest abs(neg):", np.max(np.abs(negative)))
+            except Exception as _eig_err:
+                print("[L-MATRIX DIAGNOSTIC] Eigenvalue analysis failed:", _eig_err)
         try:
             if method == 'cholesky':
-                # Try Cholesky decomposition
-                self.L_matrix = np.linalg.cholesky(corr_matrix)
+                # Attempt direct Cholesky
+                self.L_matrix = np.linalg.cholesky(matrix_to_decompose)
                 self.is_cholesky = True
             elif method == 'svd':
-                # Use SVD decomposition: C = U Sigma U^T => L_matrix = U sqrt(Sigma)
-                U, s, _ = np.linalg.svd(corr_matrix)
+                U, s, _ = np.linalg.svd(matrix_to_decompose)
+                s = np.maximum(s, 0)
                 self.L_matrix = U @ np.diag(np.sqrt(s))
-                self.is_cholesky = False  
+                self.is_cholesky = False
             elif method == 'eigen':
-                # Eigen decomposition fallback (for non-positive definite matrix)
-                eigenvalues, eigenvectors = np.linalg.eigh(corr_matrix)
+                eigenvalues, eigenvectors = np.linalg.eigh(matrix_to_decompose)
                 eigenvalues[eigenvalues < 0] = 0
                 self.L_matrix = eigenvectors @ np.diag(np.sqrt(eigenvalues))
-                self.is_cholesky = False  
+                self.is_cholesky = False
             else:
                 raise ValueError("Unknown decomposition method.")
         except np.linalg.LinAlgError:
-            # Handle failure gracefully
             print("Decomposition failed using method:", method)
-            raise
+            if method == 'cholesky':
+                # Attempt soft-fix: project to nearest PSD (clip small negatives) then retry
+                try:
+                    eigenvalues, eigenvectors = np.linalg.eigh(matrix_to_decompose)
+                    neg_mask = eigenvalues < 0
+                    if np.any(neg_mask):
+                        # Determine if negatives are tiny (numerical noise)
+                        tol_abs = 1e-12
+                        tol_rel = 1e-10 * np.max(eigenvalues)
+                        tiny_mask = neg_mask & (np.abs(eigenvalues) < max(tol_abs, tol_rel))
+                        if np.all(tiny_mask == neg_mask):
+                            print("[L-MATRIX DIAGNOSTIC] All negative eigenvalues are within numerical tolerance; clipping to zero and retrying Cholesky.")
+                            eigenvalues[neg_mask] = 0.0
+                            repaired = (eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T)
+                            # Symmetrize to remove numerical asymmetry
+                            repaired = 0.5 * (repaired + repaired.T)
+                            self.L_matrix = np.linalg.cholesky(repaired)
+                            self.is_cholesky = True
+                            print("[L-MATRIX DIAGNOSTIC] Successful Cholesky after eigenvalue clipping.")
+                            return
+                        else:
+                            print("[L-MATRIX DIAGNOSTIC] Negative eigenvalues exceed tolerance; falling back to SVD.")
+                    # Fallback to SVD
+                    U, s, _ = np.linalg.svd(matrix_to_decompose)
+                    s = np.maximum(s, 0)
+                    self.L_matrix = U @ np.diag(np.sqrt(s))
+                    self.is_cholesky = False
+                    print("[L-MATRIX DIAGNOSTIC] Used SVD fallback.")
+                except Exception as fallback_err:
+                    print("[L-MATRIX DIAGNOSTIC] Fallback attempts failed:", fallback_err)
+                    raise
+            else:
+                raise
 
 
     def write_to_hdf5(self, hdf5_group):
@@ -571,17 +587,28 @@ class CovarianceBase(ABC):
             self.sampled_uniform_values = u_correlated
         else:
             # Standard approach - apply correlation structure directly to generate relative perturbations
+            # NEW AUGUST 2025
+            # DIRECT ALGORITHM: Generate relative deviations from L_matrix directly
+            # This implements: x = (1 + z @ L_rel.T) * nominal
+            # where L_rel = cholesky(C_relative)
+            
             samples = np.zeros((batch_size, n_params))
             for i in range(batch_size):
-                if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
-                    # Generate correlated standard normal samples, then scale by standard deviations
-                    # This gives relative perturbations (in same units as std_dev_vector)
-                    correlated_normal = self.L_matrix @ z[i]
-                    samples[i] = self.std_dev_vector * correlated_normal
-                else:
-                    # Fallback to original approach
-                    samples[i] = self.mean_vector + self.L_matrix @ z[i]
-        
+                # if hasattr(self, 'std_dev_vector') and self.std_dev_vector is not None:
+                #     # Generate correlated standard normal samples, then scale by standard deviations
+                #     # This gives relative perturbations (in same units as std_dev_vector)
+                #     correlated_normal = self.L_matrix @ z[i]
+                #     samples[i] = self.std_dev_vector * correlated_normal
+                # else:
+                #     # Fallback to original approach
+                #     samples[i] = self.mean_vector + self.L_matrix @ z[i]
+                
+                # Generate correlated standard normal samples using L_matrix
+                # For URR classes, L_matrix is Cholesky(relative_covariance_matrix)
+                correlated_z = self.L_matrix @ z[i]
+                
+                # Store the relative deviations directly (these will be used as z_rel in _apply_samples)
+                samples[i] = correlated_z
         self.sampled_values = samples
         
         # Let subclasses handle how these samples are applied to their specific parameters
