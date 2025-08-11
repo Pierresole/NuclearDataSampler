@@ -102,12 +102,16 @@ class CovarianceBase(ABC):
                 self.is_cholesky = True
             elif method == 'svd':
                 U, s, _ = np.linalg.svd(matrix_to_decompose)
-                s = np.maximum(s, 0)
+                # Clip negative singular values to small positive value instead of zero
+                min_singular_value = 1e-12 * np.max(s) if np.max(s) > 0 else 1e-12
+                s = np.maximum(s, min_singular_value)
                 self.L_matrix = U @ np.diag(np.sqrt(s))
                 self.is_cholesky = False
             elif method == 'eigen':
                 eigenvalues, eigenvectors = np.linalg.eigh(matrix_to_decompose)
-                eigenvalues[eigenvalues < 0] = 0
+                # Clip negative eigenvalues to small positive value instead of zero
+                min_eigenvalue = 1e-12 * np.max(eigenvalues) if np.max(eigenvalues) > 0 else 1e-12
+                eigenvalues[eigenvalues < min_eigenvalue] = min_eigenvalue
                 self.L_matrix = eigenvectors @ np.diag(np.sqrt(eigenvalues))
                 self.is_cholesky = False
             else:
@@ -116,35 +120,42 @@ class CovarianceBase(ABC):
             print("Decomposition failed using method:", method)
             if method == 'cholesky':
                 # Attempt soft-fix: project to nearest PSD (clip small negatives) then retry
-                try:
-                    eigenvalues, eigenvectors = np.linalg.eigh(matrix_to_decompose)
-                    neg_mask = eigenvalues < 0
-                    if np.any(neg_mask):
-                        # Determine if negatives are tiny (numerical noise)
-                        tol_abs = 1e-12
-                        tol_rel = 1e-10 * np.max(eigenvalues)
-                        tiny_mask = neg_mask & (np.abs(eigenvalues) < max(tol_abs, tol_rel))
-                        if np.all(tiny_mask == neg_mask):
-                            print("[L-MATRIX DIAGNOSTIC] All negative eigenvalues are within numerical tolerance; clipping to zero and retrying Cholesky.")
-                            eigenvalues[neg_mask] = 0.0
-                            repaired = (eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T)
-                            # Symmetrize to remove numerical asymmetry
-                            repaired = 0.5 * (repaired + repaired.T)
-                            self.L_matrix = np.linalg.cholesky(repaired)
-                            self.is_cholesky = True
-                            print("[L-MATRIX DIAGNOSTIC] Successful Cholesky after eigenvalue clipping.")
-                            return
-                        else:
-                            print("[L-MATRIX DIAGNOSTIC] Negative eigenvalues exceed tolerance; falling back to SVD.")
-                    # Fallback to SVD
-                    U, s, _ = np.linalg.svd(matrix_to_decompose)
-                    s = np.maximum(s, 0)
-                    self.L_matrix = U @ np.diag(np.sqrt(s))
-                    self.is_cholesky = False
-                    print("[L-MATRIX DIAGNOSTIC] Used SVD fallback.")
-                except Exception as fallback_err:
-                    print("[L-MATRIX DIAGNOSTIC] Fallback attempts failed:", fallback_err)
-                    raise
+                eigenvalues, eigenvectors = np.linalg.eigh(matrix_to_decompose)
+                neg_mask = eigenvalues < 0
+                if np.any(neg_mask):
+                    # Determine if negatives are tiny (numerical noise)
+                    tol_abs = 1e-12
+                    tol_rel = 1e-10 * np.max(eigenvalues)
+                    tiny_mask = neg_mask & (np.abs(eigenvalues) < max(tol_abs, tol_rel))
+                    if np.all(tiny_mask == neg_mask):
+                        print("[L-MATRIX DIAGNOSTIC] All negative eigenvalues are within numerical tolerance; clipping to small positive value and retrying Cholesky.")
+                        # Clip to small positive value instead of zero
+                        min_eigenvalue = 1e-12 * np.max(eigenvalues) if np.max(eigenvalues) > 0 else 1e-12
+                        eigenvalues[neg_mask] = min_eigenvalue
+                        repaired = (eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T)
+                        # Symmetrize to remove numerical asymmetry
+                        repaired = 0.5 * (repaired + repaired.T)
+                        self.L_matrix = np.linalg.cholesky(repaired)
+                        self.is_cholesky = True
+                        print("[L-MATRIX DIAGNOSTIC] Successful Cholesky after eigenvalue clipping.")
+                        return
+                    else:
+                        print("[L-MATRIX DIAGNOSTIC] Negative eigenvalues exceed tolerance; falling back to eigenvalue decomposition instead of SVD.")
+                        # Use eigenvalue decomposition directly instead of SVD
+                        # min_eigenvalue = 1e-12 * np.max(eigenvalues) if np.max(eigenvalues) > 0 else 1e-12
+                        # eigenvalues[eigenvalues < min_eigenvalue] = min_eigenvalue
+                        eigenvalues[eigenvalues < 0] = 1e-3
+                        self.L_matrix = eigenvectors @ np.diag(np.sqrt(eigenvalues))
+                        self.is_cholesky = False
+                        print("[L-MATRIX DIAGNOSTIC] Used eigenvalue decomposition with clipping.")
+                        return
+                # If no negative eigenvalues, fall back to SVD
+                U, s, _ = np.linalg.svd(matrix_to_decompose)
+                min_singular_value = 1e-12 * np.max(s) if np.max(s) > 0 else 1e-12
+                s = np.maximum(s, min_singular_value)
+                self.L_matrix = U @ np.diag(np.sqrt(s))
+                self.is_cholesky = False
+                print("[L-MATRIX DIAGNOSTIC] Used SVD fallback.")
             else:
                 raise
 
