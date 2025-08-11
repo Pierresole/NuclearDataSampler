@@ -41,7 +41,7 @@ class Uncertainty_Angular(AngularDistributionCovariance):
         print(f"Time for extracting coefficients and std deviations: {time.time() - start_time:.4f} seconds")
         
         start_time = time.time()
-        self.extract_relcorr_matrix(mf34mt.reactions.to_list()[0])
+        self.extract_relcov_matrix(mf34mt.reactions.to_list()[0])
         print(f"Time for extracting covariance structure: {time.time() - start_time:.4f} seconds")
         
         # Compute Cholesky decomposition
@@ -58,12 +58,20 @@ class Uncertainty_Angular(AngularDistributionCovariance):
                 print(f"Pruning {len(self.pruned_parameter_indices)} zero-variance parameters before Cholesky")
                 rel_cov_reduced = rel_cov[np.ix_(self.active_parameter_indices, self.active_parameter_indices)]
                 self.reduced_relative_covariance_matrix = rel_cov_reduced
+                # Store full matrix reference before replacing for decomposition
+                self.relative_covariance_matrix_full = rel_cov.copy()
                 # Replace matrix used for decomposition temporarily
                 super().__setattr__('relative_covariance_matrix', rel_cov_reduced)
+            else:
+                # No pruning needed, but still store the matrix for debug comparison
+                self.reduced_relative_covariance_matrix = rel_cov.copy()
         self.compute_L_matrix()
+        relcovmat = self.L_matrix @ self.L_matrix.T
+        print(rel_cov_reduced[:4,:4])
+        print(relcovmat[:4,:4])
         # Restore full matrix reference for potential downstream uses (keep reduced separately)
-        if hasattr(self, 'reduced_relative_covariance_matrix'):
-            super().__setattr__('relative_covariance_matrix_full', rel_cov)
+        if hasattr(self, 'relative_covariance_matrix_full'):
+            super().__setattr__('relative_covariance_matrix', self.relative_covariance_matrix_full)
         print(f"Time for compute_L_matrix (MT{mt_number}): {time.time() - start_time:.4f} seconds")
         
         print(f"✓ Created angular distribution uncertainty for MT{mt_number}")
@@ -254,7 +262,7 @@ class Uncertainty_Angular(AngularDistributionCovariance):
         return matrix, row_mesh, col_mesh
 
 
-    def extract_relcorr_matrix(self, mt2):
+    def extract_relcov_matrix(self, mt2):
         NL = mt2.NL
         NL1 = mt2.NL1
         nblocks = mt2.number_legendre_blocks
@@ -286,7 +294,6 @@ class Uncertainty_Angular(AngularDistributionCovariance):
             if l != l1:
                 # Fill symmetric block
                 full_rel_cov[(l1-1)*N:l1*N, (l-1)*N:l*N] = mat_expanded.T
-        
         super().__setattr__('relative_covariance_matrix', full_rel_cov)  # Store for compute_L_matrix()
 
 
@@ -300,6 +307,10 @@ class Uncertainty_Angular(AngularDistributionCovariance):
             a_sample = a_nominal * (1 + δ)
         Absolute coefficients are reconstructed lazily when requested.
         """
+        # Store samples for debug analysis if in debug mode
+        if debug:
+            self.stored_samples = samples.copy()
+        
         # Ensure samples is properly shaped (these samples correspond ONLY to active parameters, zero-variance pruned)
         if samples.ndim == 1:
             samples = samples.reshape(1, -1)
@@ -345,8 +356,14 @@ class Uncertainty_Angular(AngularDistributionCovariance):
             if hasattr(self.legendre_data, 'coefficients'):
                 legendre_orders = [c.order for c in self.legendre_data.coefficients]
                 print(f"   Legendre orders: {legendre_orders}")
+            print(f"\n🚨 DEBUG MODE: STACKING PERTURBATIONS (no file creation)")
+            print(f"   Perturbations will be stored in memory for covariance verification")
         
-        print(f"🚨 ANGULAR DEBUG (relative deviations): mode='{mode}', n_samples={n_samples}")
+        if not debug:
+            print(f"🚨 ANGULAR (relative deviations): mode='{mode}', n_samples={n_samples}")
+        else:
+            print(f"🚨 ANGULAR DEBUG (relative deviations): mode='{mode}', n_samples={n_samples}")
+            print(f"   Storing samples in coefficient objects for matrix comparison")
         
         # Clear existing samples if in replace mode (except nominal at index 0)
         if mode == 'replace':
@@ -398,11 +415,13 @@ class Uncertainty_Angular(AngularDistributionCovariance):
                     target_factor[effective_sample_idx] = factors.tolist()
 
         # Perform debug verification if requested
-        if debug and n_samples >= 10:  # Only verify if we have enough samples
+        if debug:
             print(f"\n🔍 COEFFICIENT SAMPLING VERIFICATION:")
-            self._verify_coefficient_sampling_statistics(debug=True)
-        elif debug and n_samples < 10:
-            print(f"\n⚠️  Note: Statistical verification skipped (need ≥10 samples, got {n_samples})")
+            # Store samples if debugging
+            self.stored_samples = samples.copy()
+            
+            # Comprehensive debug analysis
+            self._comprehensive_debug_analysis(samples, debug=True)
 
 
     def _verify_coefficient_sampling_statistics(self, debug=True):
@@ -423,6 +442,137 @@ class Uncertainty_Angular(AngularDistributionCovariance):
             delta_matrix = np.vstack(all_deltas)
             sample_std = delta_matrix.std(axis=0, ddof=1)
             print(f"   Relative deviation sample std (first 10): {sample_std[:10]}")
+
+    def _debug_show_sample_matrix(self, samples, debug=True):
+        """
+        Show the sample matrix for debugging purposes.
+        """
+        if debug:
+            print(f"\n📋 SAMPLE MATRIX (active parameters only):")
+            print(f"   Shape: {samples.shape}")
+            print(f"   Sample matrix (first 5 rows, first 10 cols):")
+            max_rows = min(5, samples.shape[0])
+            max_cols = min(10, samples.shape[1])
+            for i in range(max_rows):
+                row_str = "   " + " ".join(f"{samples[i,j]:8.4f}" for j in range(max_cols))
+                if samples.shape[1] > max_cols:
+                    row_str += " ..."
+                print(row_str)
+            if samples.shape[0] > max_rows:
+                print("   ...")
+
+    def _debug_covariance_comparison(self, samples, debug=True):
+        """
+        Compare the empirical covariance matrix from samples with the original relative covariance matrix.
+        Identifies coefficients that differ by more than 10%.
+        """
+        print(f"\n🔍 COVARIANCE MATRIX COMPARISON:")
+        print(f"   Debug flag: {debug}, samples shape: {samples.shape}")
+        
+        if not debug:
+            print("   Debug mode not enabled")
+            return
+            
+        if samples.shape[0] < 10:
+            print(f"   Not enough samples for comparison ({samples.shape[0]} < 10)")
+            return
+        
+        # Debug: Check what covariance matrices are available
+        available_matrices = []
+        if hasattr(self, 'reduced_relative_covariance_matrix'):
+            available_matrices.append(f"reduced_relative_covariance_matrix: {self.reduced_relative_covariance_matrix.shape}")
+        if hasattr(self, 'relative_covariance_matrix_full'):
+            available_matrices.append(f"relative_covariance_matrix_full: {self.relative_covariance_matrix_full.shape}")
+        if hasattr(self, 'relative_covariance_matrix'):
+            available_matrices.append(f"relative_covariance_matrix: {self.relative_covariance_matrix.shape}")
+        print(f"   Available matrices: {available_matrices}")
+        
+        # Compute empirical covariance from samples
+        empirical_cov = np.cov(samples, rowvar=False)
+        
+        # Get the reduced (active parameters only) relative covariance matrix
+        if hasattr(self, 'reduced_relative_covariance_matrix'):
+            expected_cov = self.reduced_relative_covariance_matrix
+        elif hasattr(self, 'relative_covariance_matrix_full'):
+            # Use the full matrix that was saved during initialization
+            active_indices = getattr(self, 'active_parameter_indices', list(range(samples.shape[1])))
+            expected_cov = self.relative_covariance_matrix_full[np.ix_(active_indices, active_indices)]
+        elif hasattr(self, 'relative_covariance_matrix'):
+            # If no reduced matrix available, extract from full matrix using active indices
+            active_indices = getattr(self, 'active_parameter_indices', list(range(samples.shape[1])))
+            expected_cov = self.relative_covariance_matrix[np.ix_(active_indices, active_indices)]
+        else:
+            print("   ⚠️  No reference covariance matrix available for comparison")
+            return
+        
+        if empirical_cov.shape != expected_cov.shape:
+            print(f"   ⚠️  Shape mismatch: empirical {empirical_cov.shape} vs expected {expected_cov.shape}")
+            return
+        
+        # Compare diagonal elements (variances)
+        empirical_var = np.diag(empirical_cov)
+        expected_var = np.diag(expected_cov)
+        
+        # Calculate relative differences
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rel_diff = np.abs(empirical_var - expected_var) / np.maximum(expected_var, 1e-10)
+        
+        # Find parameters with >10% difference
+        threshold = 0.10  # 10%
+        large_diff_indices = np.where(rel_diff > threshold)[0]
+        
+        print(f"   Total active parameters: {len(empirical_var)}")
+        print(f"   Parameters with >10% variance difference: {len(large_diff_indices)}")
+        
+        if len(large_diff_indices) > 0:
+            print(f"\n   🚨 LARGE DIFFERENCES (>{threshold*100:.0f}%):")
+            print(f"   {'Param':<6} {'Order':<6} {'Bin':<4} {'Expected':<12} {'Empirical':<12} {'Rel.Diff':<10}")
+            print(f"   {'-'*60}")
+            
+            # Map parameter indices back to Legendre orders and bins
+            active_indices = getattr(self, 'active_parameter_indices', list(range(len(self.parameter_index_map))))
+            
+            for local_idx in large_diff_indices[:20]:  # Show first 20 problematic parameters
+                global_idx = active_indices[local_idx] if local_idx < len(active_indices) else local_idx
+                
+                if global_idx < len(self.parameter_index_map):
+                    coeff, bin_idx = self.parameter_index_map[global_idx]
+                    order = coeff.order
+                else:
+                    order = "?"
+                    bin_idx = "?"
+                
+                expected_val = expected_var[local_idx]
+                empirical_val = empirical_var[local_idx]
+                rel_diff_val = rel_diff[local_idx]
+                
+                print(f"   {local_idx:<6} {order:<6} {bin_idx:<4} {expected_val:<12.6f} {empirical_val:<12.6f} {rel_diff_val:<10.2%}")
+            
+            if len(large_diff_indices) > 20:
+                print(f"   ... and {len(large_diff_indices) - 20} more")
+        else:
+            print(f"   ✅ All parameters within {threshold*100:.0f}% tolerance")
+        
+        # Summary statistics
+        print(f"\n   📊 VARIANCE COMPARISON STATISTICS:")
+        print(f"   Mean relative difference: {np.mean(rel_diff):.2%}")
+        print(f"   Max relative difference: {np.max(rel_diff):.2%}")
+        print(f"   RMS relative difference: {np.sqrt(np.mean(rel_diff**2)):.2%}")
+        
+        # Frobenius norm comparison for full matrices
+        frobenius_diff = np.linalg.norm(empirical_cov - expected_cov, 'fro')
+        frobenius_expected = np.linalg.norm(expected_cov, 'fro')
+        frobenius_rel = frobenius_diff / frobenius_expected if frobenius_expected > 0 else np.inf
+        
+        print(f"   Matrix Frobenius norm difference: {frobenius_rel:.2%}")
+        
+        return {
+            'empirical_cov': empirical_cov,
+            'expected_cov': expected_cov,
+            'large_diff_indices': large_diff_indices,
+            'rel_diff': rel_diff,
+            'frobenius_rel_diff': frobenius_rel
+        }
 
     
     @classmethod
@@ -1155,3 +1305,173 @@ class Uncertainty_Angular(AngularDistributionCovariance):
             print(f"Expected enhancement: {len(original_energies)} → {expected_total_points} points")
         
         return results
+
+    def _comprehensive_debug_analysis(self, samples, debug=True):
+        """
+        Perform comprehensive debug analysis including covariance matrix comparison,
+        statistical tests, and detailed discrepancy analysis.
+        """
+        if not debug:
+            return
+            
+        import numpy as np
+        from scipy import stats
+        
+        n_samples, n_params = samples.shape
+        print(f"\n{'='*60}")
+        print(f"🔍 COMPREHENSIVE DEBUG ANALYSIS")
+        print(f"{'='*60}")
+        print(f"📊 Samples: {n_samples}, Parameters: {n_params}")
+        
+        if n_samples < 10:
+            print(f"⚠️  Statistical verification requires ≥10 samples (got {n_samples})")
+            print(f"📋 Sample matrix preview:")
+            print(samples[:min(5, n_samples), :min(10, n_params)])
+            return
+        
+        # 1. Get theoretical covariance matrix
+        print(f"\n1️⃣ THEORETICAL COVARIANCE MATRIX ANALYSIS")
+        
+        # Try to get the covariance matrix - handle HDF5 read case where only L_matrix is available
+        theoretical_cov = None
+        matrix_source = "Unknown"
+        
+        if hasattr(self, 'relative_covariance_matrix') and self.relative_covariance_matrix is not None:
+            theoretical_cov = self.relative_covariance_matrix
+            matrix_source = "relative_covariance_matrix"
+        elif hasattr(self, 'reduced_relative_covariance_matrix') and self.reduced_relative_covariance_matrix is not None:
+            theoretical_cov = self.reduced_relative_covariance_matrix
+            matrix_source = "reduced_relative_covariance_matrix"
+        elif hasattr(self, 'L_matrix') and self.L_matrix is not None:
+            # Reconstruct covariance matrix from L_matrix (L @ L.T)
+            theoretical_cov = self.L_matrix @ self.L_matrix.T
+            matrix_source = "reconstructed from L_matrix"
+            print(f"📋 Reconstructed covariance matrix from L_matrix")
+        else:
+            print(f"❌ No covariance matrix available for analysis")
+            return
+        
+        print(f"📏 Theoretical matrix shape: {theoretical_cov.shape}")
+        print(f"📋 Matrix source: {matrix_source}")
+        print(f"📋 Theoretical relative covariance [:5,:5]:")
+        print(theoretical_cov[:5, :5])
+        
+        # Check matrix properties
+        eigenvals = np.linalg.eigvals(theoretical_cov)
+        min_eigenval = np.min(eigenvals)
+        max_eigenval = np.max(eigenvals)
+        print(f"🔢 Eigenvalue range: [{min_eigenval:.2e}, {max_eigenval:.2e}]")
+        print(f"📊 Condition number: {max_eigenval/max(min_eigenval, 1e-15):.2e}")
+        
+        # 2. Compute empirical covariance matrix
+        print(f"\n2️⃣ EMPIRICAL COVARIANCE MATRIX ANALYSIS")
+        # Center the samples (remove mean)
+        samples_centered = samples - np.mean(samples, axis=0)
+        empirical_cov = np.cov(samples_centered.T, ddof=1)
+        print(f"📏 Empirical matrix shape: {empirical_cov.shape}")
+        print(f"📋 Empirical relative covariance [:5,:5]:")
+        print(empirical_cov[:5, :5])
+        
+        # Check empirical matrix properties
+        emp_eigenvals = np.linalg.eigvals(empirical_cov)
+        emp_min_eigenval = np.min(emp_eigenvals)
+        emp_max_eigenval = np.max(emp_eigenvals)
+        print(f"🔢 Eigenvalue range: [{emp_min_eigenval:.2e}, {emp_max_eigenval:.2e}]")
+        print(f"📊 Condition number: {emp_max_eigenval/max(emp_min_eigenval, 1e-15):.2e}")
+        
+        # 3. Matrix comparison and discrepancy analysis
+        print(f"\n3️⃣ MATRIX COMPARISON ANALYSIS")
+        diff_matrix = empirical_cov - theoretical_cov
+        frobenius_norm = np.linalg.norm(diff_matrix, 'fro')
+        relative_frobenius = frobenius_norm / np.linalg.norm(theoretical_cov, 'fro')
+        print(f"📏 Frobenius norm of difference: {frobenius_norm:.4e}")
+        print(f"📏 Relative Frobenius norm: {relative_frobenius:.4e}")
+        
+        # 4. Diagonal analysis (variances)
+        print(f"\n4️⃣ DIAGONAL DISCREPANCY ANALYSIS (Top 10)")
+        diagonal_theoretical = np.diag(theoretical_cov)
+        diagonal_empirical = np.diag(empirical_cov)
+        diagonal_diff = np.abs(diagonal_empirical - diagonal_theoretical)
+        diagonal_rel_diff = diagonal_diff / (np.abs(diagonal_theoretical) + 1e-15)
+        
+        # Top 10 most discrepant diagonal terms
+        top_diagonal_indices = np.argsort(diagonal_rel_diff)[-10:][::-1]
+        for i, idx in enumerate(top_diagonal_indices):
+            print(f"  {i+1:2d}. Param {idx:3d}: theoretical={diagonal_theoretical[idx]:.4e}, "
+                  f"empirical={diagonal_empirical[idx]:.4e}, "
+                  f"rel_diff={diagonal_rel_diff[idx]:.4e}")
+        
+        # 5. Off-diagonal analysis (correlations)
+        print(f"\n5️⃣ OFF-DIAGONAL CORRELATION ANALYSIS (Top 10)")
+        
+        # Convert to correlation matrices
+        def cov_to_corr(cov_matrix):
+            """Convert covariance matrix to correlation matrix"""
+            std_devs = np.sqrt(np.diag(cov_matrix))
+            # Avoid division by zero
+            std_devs = np.where(std_devs < 1e-15, 1e-15, std_devs)
+            corr_matrix = cov_matrix / np.outer(std_devs, std_devs)
+            return corr_matrix
+        
+        theoretical_corr = cov_to_corr(theoretical_cov)
+        empirical_corr = cov_to_corr(empirical_cov)
+        
+        # Find off-diagonal discrepancies
+        corr_diff = np.abs(empirical_corr - theoretical_corr)
+        # Mask diagonal elements
+        mask = np.eye(corr_diff.shape[0], dtype=bool)
+        corr_diff[mask] = 0
+        
+        # Get top 10 off-diagonal discrepancies
+        flat_indices = np.argsort(corr_diff.ravel())[-10:][::-1]
+        row_indices, col_indices = np.unravel_index(flat_indices, corr_diff.shape)
+        
+        for i, (row, col) in enumerate(zip(row_indices, col_indices)):
+            if row != col:  # Skip any diagonal elements that might have slipped through
+                theoretical_corr_val = theoretical_corr[row, col]
+                empirical_corr_val = empirical_corr[row, col]
+                diff_val = corr_diff[row, col]
+                print(f"  {i+1:2d}. ({row:3d},{col:3d}): theoretical={theoretical_corr_val:+.4f}, "
+                      f"empirical={empirical_corr_val:+.4f}, "
+                      f"|diff|={diff_val:.4f}")
+        
+        # 6. Hotelling's T² test for zero mean
+        print(f"\n6️⃣ HOTELLING'S T² TEST FOR ZERO MEAN")
+        sample_mean = np.mean(samples, axis=0)
+        
+        # Compute T² statistic
+        try:
+            # Use empirical covariance for the test
+            emp_cov_inv = np.linalg.pinv(empirical_cov)
+            t_squared = n_samples * sample_mean.T @ emp_cov_inv @ sample_mean
+            
+            # Convert to F-statistic
+            f_statistic = (n_samples - n_params) / ((n_samples - 1) * n_params) * t_squared
+            p_value = 1 - stats.f.cdf(f_statistic, n_params, n_samples - n_params)
+            
+            print(f"📊 Sample mean norm: {np.linalg.norm(sample_mean):.4e}")
+            print(f"📊 T² statistic: {t_squared:.4f}")
+            print(f"📊 F statistic: {f_statistic:.4f}")
+            print(f"📊 p-value: {p_value:.4e}")
+            
+            if p_value < 0.05:
+                print(f"⚠️  Significant deviation from zero mean (p < 0.05)")
+            else:
+                print(f"✅ Mean is consistent with zero (p ≥ 0.05)")
+                
+        except Exception as e:
+            print(f"❌ Hotelling's T² test failed: {e}")
+        
+        # 7. Summary
+        print(f"\n7️⃣ SUMMARY")
+        print(f"📊 Relative Frobenius norm: {relative_frobenius:.4e}")
+        if relative_frobenius < 0.1:
+            print(f"✅ Good agreement between theoretical and empirical covariance")
+        elif relative_frobenius < 0.3:
+            print(f"⚠️  Moderate agreement between theoretical and empirical covariance")
+        else:
+            print(f"❌ Poor agreement between theoretical and empirical covariance")
+        
+        print(f"{'='*60}")
+        print(f"🔍 DEBUG ANALYSIS COMPLETE")
+        print(f"{'='*60}\n")
