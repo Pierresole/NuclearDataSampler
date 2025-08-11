@@ -172,7 +172,7 @@ class NDSampler:
                 covariance_obj.sample_parameters(
                     sampling_method=self.settings.sampling, 
                     mode=self.settings.mode, 
-                    use_copula=True, 
+                    use_copula=False, 
                     num_samples=num_samples,
                     debug=self.settings.debug
                 )
@@ -236,8 +236,7 @@ def generate_covariance_dict(endf_tape):
                     for sub_section in parsed_section.reactions:
                         # Loop over Legendre blocks to collect all orders
                         for legendre_block in sub_section.legendre_blocks:
-                            L = legendre_block.L
-                            legendre_orders.add(L)
+                            legendre_orders.add(legendre_block.L)
                     
                     # Store as sorted list for the MT
                     covariance_dict[MF][MT] = sorted(list(legendre_orders))
