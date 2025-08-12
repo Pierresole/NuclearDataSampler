@@ -56,8 +56,8 @@ class ResonanceRangeCovariance(CovarianceBase, ABC):
             indices_to_process = ner_list
             
         # Validate that all requested indices exist
-        if max(indices_to_process, default=-1) >= len(mf32_ranges):
-            raise IndexError(f"NER list contains indices that exceed the number of available resonance ranges: {len(mf32_ranges)}")
+        # if max(indices_to_process, default=-1) >= len(mf32_ranges):
+        #     raise IndexError(f"NER list contains indices that exceed the number of available resonance ranges: {len(mf32_ranges)}")
         
         print(f"Processing {len(indices_to_process)} resonance range(s) with NER values: {list(indices_to_process)}")
         
