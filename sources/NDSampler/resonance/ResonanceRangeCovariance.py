@@ -62,9 +62,9 @@ class ResonanceRangeCovariance(CovarianceBase, ABC):
         print(f"Processing {len(indices_to_process)} resonance range(s) with NER values: {list(indices_to_process)}")
         
         for NER in indices_to_process:
-            if NER >= len(mf2_ranges) or NER >= len(mf32_ranges):
-                print(f"Warning: Skipping invalid NER={NER}, max MF2={len(mf2_ranges)-1}, max MF32={len(mf32_ranges)-1}")
-                continue
+            # if NER >= len(mf2_ranges) or NER >= len(mf32_ranges):
+            #     print(f"Warning: Skipping invalid NER={NER}, max MF2={len(mf2_ranges)-1}, max MF32={len(mf32_ranges)-1}")
+            #     continue
                 
             mf2_resonance_range = mf2_ranges[NER]
             mf32_resonance_range = mf32_ranges[NER]
