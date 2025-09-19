@@ -241,27 +241,37 @@ class LGroup:
                 MPAR = 5
             # For each MF2 resonance energy, find the matching MF32 index
             for mf2_idx, mf2_er in enumerate(mf2_lvalue.ER):
+                mf32_idx = None
+                der, dgn, dgg, dgfa, dgfb = None, None, None, None, None
+                
                 # Find the closest matching energy in MF32
-                for mf32_idx, mf32_er in enumerate(mf32_range.parameters.uncertainties.ER.to_list()):
-                    if mf2_lvalue.AJ[mf2_idx] == mf32_range.parameters.uncertainties.AJ[mf32_idx] and abs(mf2_er - mf32_er) < 1e-6:  # Using a small tolerance for floating-point comparison
-
-                        # Create resonance parameter
-                        resonance = ResonanceParameter.from_endftk(
-                            ER=mf2_lvalue.ER[mf2_idx],
-                            DER=mf32_range.parameters.uncertainties.DER[mf32_idx],
-                            AJ=mf2_lvalue.spin_values[mf2_idx],
-                            GN=mf2_lvalue.neutron_widths[mf2_idx],
-                            DGN=mf32_range.parameters.uncertainties.DGN[mf32_idx],
-                            GG=mf2_lvalue.gamma_widths[mf2_idx],
-                            DGG=mf32_range.parameters.uncertainties.DGG[mf32_idx],
-                            GFA=mf2_lvalue.first_fission_widths[mf2_idx],
-                            DGFA=mf32_range.parameters.uncertainties.DGFA[mf32_idx],
-                            GFB=mf2_lvalue.second_fission_widths[mf2_idx],
-                            DGFB=mf32_range.parameters.uncertainties.DGFB[mf32_idx],
-                            index=mf32_idx
-                        )
-                        resonances.append(resonance)
+                for idx, mf32_er in enumerate(mf32_range.parameters.uncertainties.ER.to_list()):
+                    if mf2_lvalue.AJ[mf2_idx] == mf32_range.parameters.uncertainties.AJ[idx] and abs(mf2_er - mf32_er) < 1e-6:  # Using a small tolerance for floating-point comparison
+                        mf32_idx = idx
+                        # Extract uncertainties from matched MF32 data
+                        der = mf32_range.parameters.uncertainties.DER[mf32_idx]
+                        dgn = mf32_range.parameters.uncertainties.DGN[mf32_idx]
+                        dgg = mf32_range.parameters.uncertainties.DGG[mf32_idx]
+                        dgfa = mf32_range.parameters.uncertainties.DGFA[mf32_idx]
+                        dgfb = mf32_range.parameters.uncertainties.DGFB[mf32_idx]
                         break
+                
+                # Create resonance parameter (with or without uncertainties)
+                resonance = ResonanceParameter.from_endftk(
+                    ER=mf2_lvalue.ER[mf2_idx],
+                    DER=der,
+                    AJ=mf2_lvalue.spin_values[mf2_idx],
+                    GN=mf2_lvalue.neutron_widths[mf2_idx],
+                    DGN=dgn,
+                    GG=mf2_lvalue.gamma_widths[mf2_idx],
+                    DGG=dgg,
+                    GFA=mf2_lvalue.first_fission_widths[mf2_idx],
+                    DGFA=dgfa,
+                    GFB=mf2_lvalue.second_fission_widths[mf2_idx],
+                    DGFB=dgfb,
+                    index=mf32_idx
+                )
+                resonances.append(resonance)
         
         # Sort resonances by increasing resonance energy (ER)
         resonances.sort(key=lambda r: r.ER[0])
