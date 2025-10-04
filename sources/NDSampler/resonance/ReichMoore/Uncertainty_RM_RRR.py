@@ -296,8 +296,8 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
         """
         # Handle single sample vs batch sample format
         if batch_size == 1:
-            # Single sample (1D array)
-            sample_list = [samples]  # Convert to list with one element for consistent processing
+            # Single sample - extract the first row from the 2D samples array
+            sample_list = [samples[0]]  # Convert to list with one 1D array for consistent processing
             operation_mode = 'replace'
         else:
             # Batch of samples (2D array - samples[sample_index][parameter_index])
@@ -415,7 +415,6 @@ class Uncertainty_RM_RRR(ResonanceRangeCovariance):
                             
                             # Determine the effective sample index
                             effective_sample_idx = sample_batch_idx + 1  # +1 because index 0 is the nominal value
-                            
                             # Update the parameter list according to the operation mode
                             if operation_mode == 'stack':
                                 if effective_sample_idx < len(param_list):
