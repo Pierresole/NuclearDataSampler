@@ -115,25 +115,6 @@ class AngularDistributionCovariance(CovarianceBase, ABC):
                 covariance_obj = Uncertainty_Angular.read_from_hdf5(subgroup)
                 covariance_objects.append(covariance_obj)
 
-    def print_parameters(self):
-        """
-        Prints information about the angular distribution parameters.
-        """
-        if self.legendre_data is not None:
-            print("Angular Distribution Legendre Coefficients:")
-            for i, coeff in enumerate(self.legendre_data.coefficients):
-                print(f"  L={coeff.order} (MT={coeff.mt}): {len(coeff.energies)-1} energy bins")
-                print(f"    Energy range: [{coeff.energies[0]:.2e}, {coeff.energies[-1]:.2e}] eV")
-                if len(coeff.factor) > 0:
-                    print(f"    Samples: {len(coeff.factor)} realizations")
-        else:
-            print("No Legendre coefficient data available")
-        
-        if hasattr(self, 'covariance_matrix') and self.covariance_matrix is not None:
-            print(f"\nCovariance matrix: {self.covariance_matrix.shape[0]}×{self.covariance_matrix.shape[1]}")
-            if hasattr(self, 'std_dev_vector'):
-                print(f"Relative std deviations: [{self.std_dev_vector.min():.4f}, {self.std_dev_vector.max():.4f}]")
-    
     @abstractmethod
     def update_tape(self, tape, sample_index=1, sample_name=""):
         """

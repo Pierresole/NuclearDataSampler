@@ -5,69 +5,89 @@ import numpy as np
 
 @dataclass
 class LegendreCoefficient:
+    """Stores Legendre coefficient data for a single order.
+    
+    Follows methodology from mf34_test_clever.ipynb:
+    - Stores nominal coefficients from MF4 (index 0)
+    - Stores relative deviations δ where a_sample = a_nominal × (1 + δ)
+    - Energy bins align with MF34 covariance structure
+    """
     mt: int
-    order: int
-    energies: List[float] = field(default_factory=list)
-    # Absolute coefficients per sample (index 0 nominal); non-nominal kept None when using relative deviations
-    legcoeff: List[List[float]] = field(default_factory=list)
-    std_dev: List[float] = field(default_factory=list)
-    factor: List[List[float]] = field(default_factory=list)  # Backward compatibility (multiplicative factors)
-    rel_deviation: List[List[float]] = field(default_factory=list)  # δ = relative deviation per sample/bin
-    constraints: Optional[dict] = None
-    # Indices of bins (within this coefficient's energy grid) that have non-zero std_dev
-    active_bin_indices: List[int] = field(default_factory=list)
-    # Indices of bins with zero variance (std_dev == 0) retained for reconstruction with zero perturbation
-    zero_variance_bins: List[int] = field(default_factory=list)
+    order: int  # Legendre order L (1, 2, 3, ...)
+    energies: List[float] = field(default_factory=list)  # Covariance bin boundaries
+    legcoeff: List[List[float]] = field(default_factory=list)  # [0] = nominal, rest computed on-demand
+    rel_deviation: List[List[float]] = field(default_factory=list)  # delta per sample (1-indexed)
 
     def get_coefficients_for_sample(self, sample_index: int) -> List[float]:
+        """Reconstruct absolute coefficients for a given sample.
+        
+        Args:
+            sample_index: 0 for nominal, ≥1 for sampled perturbations
+            
+        Returns:
+            List of absolute coefficient values for this energy grid
+        """
         if sample_index == 0:
             return self.legcoeff[0] if self.legcoeff else []
-        if sample_index < len(self.legcoeff) and self.legcoeff[sample_index] is not None:
-            return self.legcoeff[sample_index]
+        
+        # Reconstruct from relative deviations: a_sample = a_nominal × (1 + δ)
         if sample_index < len(self.rel_deviation) and self.rel_deviation[sample_index] is not None:
             nominal = self.legcoeff[0]
             delta = self.rel_deviation[sample_index]
             return [nominal[i] * (1.0 + delta[i]) for i in range(len(nominal))]
-        raise ValueError(f"Sample index {sample_index} not available for Legendre order {self.order}.")
+        
+        raise ValueError(f"Sample {sample_index} not available for L={self.order}")
 
     def get_factors_for_sample(self, sample_index: int) -> List[float]:
+        """Get multiplicative factors (1 + δ) for a given sample.
+        
+        Args:
+            sample_index: 0 for nominal (returns 1.0), ≥1 for samples
+            
+        Returns:
+            List of multiplicative factors per energy bin
+        """
         if sample_index == 0:
             n_bins = len(self.energies) - 1 if self.energies else 0
             return [1.0] * n_bins
-        if sample_index < len(self.factor) and self.factor[sample_index] is not None:
-            return self.factor[sample_index]
+        
         if sample_index < len(self.rel_deviation) and self.rel_deviation[sample_index] is not None:
             return [1.0 + d for d in self.rel_deviation[sample_index]]
-        raise ValueError(f"Factor for sample index {sample_index} not available for Legendre order {self.order}.")
-
-    def get_standard_deviations(self) -> List[float]:
-        return self.std_dev
+        
+        raise ValueError(f"Sample {sample_index} not available for L={self.order}")
 
     def write_to_hdf5(self, hdf5_group):
+        """Write coefficient data to HDF5 group."""
         grp = hdf5_group.create_group(f"L{self.order}")
         grp.attrs['mt'] = self.mt
         grp.attrs['order'] = self.order
         grp.create_dataset('energies', data=self.energies)
         grp.create_dataset('legcoeff', data=np.array(self.legcoeff))
-        grp.create_dataset('std_dev', data=np.array(self.std_dev))
-        grp.create_dataset('factor', data=np.array(self.factor))
         if self.rel_deviation:
             grp.create_dataset('rel_deviation', data=np.array(self.rel_deviation))
 
     @classmethod
     def read_from_hdf5(cls, hdf5_group):
+        """Read coefficient data from HDF5 group."""
         mt = hdf5_group.attrs['mt']
         order = hdf5_group.attrs['order']
         energies = hdf5_group['energies'][()].tolist()
         legcoeff = hdf5_group['legcoeff'][()].tolist() if 'legcoeff' in hdf5_group else []
-        std_dev = hdf5_group['std_dev'][()].tolist() if 'std_dev' in hdf5_group else []
-        factor = hdf5_group['factor'][()].tolist() if 'factor' in hdf5_group else []
         rel_deviation = hdf5_group['rel_deviation'][()].tolist() if 'rel_deviation' in hdf5_group else []
-        return cls(mt=mt, order=order, energies=energies, legcoeff=legcoeff, std_dev=std_dev,
-                   factor=factor, rel_deviation=rel_deviation)
+        return cls(mt=mt, order=order, energies=energies, legcoeff=legcoeff, rel_deviation=rel_deviation)
 
 @dataclass
-class LegendreCoefficients:
+class AngularDistributionData:
+    """Container for angular distribution parameters from MF4/MF34.
+    
+    This class stores:
+    - Legendre coefficients per order (with covariance bin structure)
+    - Original MF4 data for interpolation during ENDF file reconstruction
+    
+    Name clarification:
+    - LegendreCoefficient: Single Legendre order (L=1, L=2, etc.)
+    - AngularDistributionData: Complete angular distribution (all orders)
+    """
     coefficients: List[LegendreCoefficient] = field(default_factory=list)
     # Store original MF4 data for interpolation (avoid overwriting during sampling)
     original_mf4_energies: List[float] = field(default_factory=list)
@@ -195,13 +215,9 @@ class LegendreCoefficients:
                     mt=2,  # Elastic scattering
                     order=order,
                     energies=cov_energies,
-                    legcoeff=[nominal_coeffs],  # Initialize with nominal coefficients
-                    std_dev=std_deviations,
-                    factor=[[1.0] * n_bins]  # Initialize with nominal factors for backward compatibility
+                    legcoeff=[nominal_coeffs],  # Initialize with nominal coefficients at index 0
+                    rel_deviation=[]  # Will be populated during sampling
                 )
-                # Record active vs zero-variance bins for later pruning in sampling
-                coeff.active_bin_indices = [i for i, sd in enumerate(std_deviations) if sd > 0 and not np.isclose(sd, 0.0)]
-                coeff.zero_variance_bins = [i for i, sd in enumerate(std_deviations) if i not in coeff.active_bin_indices]
                 coeffs.append(coeff)
         
         return cls(coefficients=coeffs, original_mf4_energies=mf4_energies, original_mf4_coefficients=original_mf4_coefficients)
@@ -308,64 +324,6 @@ class LegendreCoefficients:
         
         # Should not reach here
         return []
-
-    def interpolate_coefficient_at_energy(self, order: int, energy: float, mf4_energies: List[float], mf4_coefficients: List[List[float]]) -> float:
-        """
-        Interpolate Legendre coefficient at given energy using linear interpolation.
-        
-        Parameters:
-        - order: Legendre order (1, 2, 3, ...)
-        - energy: Energy at which to interpolate
-        - mf4_energies: List of energies from MF4 data
-        - mf4_coefficients: List of coefficient arrays [a1, a2, a3, ...] for each energy
-        
-        Returns:
-        - Interpolated coefficient value
-        """
-        if order == 0:
-            return 1.0  # L=0 coefficient is always 1.0
-        
-        # Find bracketing energies
-        if energy <= mf4_energies[0]:
-            # Below first energy - use first value
-            if order <= len(mf4_coefficients[0]):
-                return mf4_coefficients[0][order - 1]  # order-1 because coefficients start with L=1
-            else:
-                return 0.0
-        
-        if energy >= mf4_energies[-1]:
-            # Above last energy - use last value
-            if order <= len(mf4_coefficients[-1]):
-                return mf4_coefficients[-1][order - 1]
-            else:
-                return 0.0
-        
-        # Find interpolation indices
-        for i in range(len(mf4_energies) - 1):
-            if mf4_energies[i] <= energy <= mf4_energies[i + 1]:
-                e_low = mf4_energies[i]
-                e_high = mf4_energies[i + 1]
-                
-                # Get coefficient values at bracketing energies
-                if order <= len(mf4_coefficients[i]):
-                    a_low = mf4_coefficients[i][order - 1]
-                else:
-                    a_low = 0.0
-                    
-                if order <= len(mf4_coefficients[i + 1]):
-                    a_high = mf4_coefficients[i + 1][order - 1]
-                else:
-                    a_high = 0.0
-                
-                # Linear interpolation
-                if e_high == e_low:
-                    return a_low  # Avoid division by zero
-                else:
-                    interpolated = a_low + (energy - e_low) / (e_high - e_low) * (a_high - a_low)
-                    return interpolated
-        
-        # Should not reach here
-        return 0.0
 
     def reconstruct(self, sample_index: int) -> Dict[int, List[float]]:
         """

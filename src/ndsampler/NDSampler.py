@@ -182,9 +182,12 @@ class NDSampler:
                 print("Debug mode enabled - skipping tape creation")
                 return
                 
+            # Copy the original one as sample zero
+            self.original_tape.to_file(f'sampled_tape_random0.endf')
+
             # Now create individual tapes for each sample
             for i in range(1, num_samples + 1):
-                print(f"Creating tape for sample {i}...")
+                # print(f"Creating tape for sample {i}...")
                 # Create a fresh copy of the original tape for each sample
                 # Use deepcopy or re-read from original source to avoid cumulative perturbations
                 # endf_tape: Tape = Tape.from_string(self.original_tape.to_string())
@@ -200,7 +203,7 @@ def generate_covariance_dict(endf_tape):
     Generate a dictionary of covariance data from an ENDF tape.
     """
     covariance_dict = {}
-    mat = endf_tape.MAT(endf_tape.material_numbers[0])
+    mat = endf_tape.materials.front()
 
     # Loop over covariance MF sections
     for MF in [31, 32, 33, 34, 35]:
