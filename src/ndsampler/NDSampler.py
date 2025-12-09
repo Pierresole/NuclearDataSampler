@@ -25,7 +25,7 @@ class SamplerSettings:
             raise ValueError(f"Sampling method '{self.sampling}' not recognized. "
                              f"Valid options are: {', '.join(valid_sampling_methods)}")
 
-class NDSampler:
+class ndsampler:
     def __init__(self, endf_adress: str, covariance_dict: dict = None, settings: Optional[SamplerSettings] = None, hdf5_filename: Optional[str] = None):
 
         # Set the HDF5 filename
