@@ -9,4 +9,4 @@ develop/
 *.csv
 *.txt
 *.png
-sources/NuclearDataSampler.egg-info/
+src/ndsampler.egg-info/
